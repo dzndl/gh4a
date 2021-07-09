@@ -2,12 +2,9 @@ package com.gh4a.adapter.timeline;
 
 import android.content.Context;
 import android.content.Intent;
-import android.graphics.Typeface;
 import androidx.annotation.Nullable;
+
 import android.text.SpannableStringBuilder;
-import android.text.style.ForegroundColorSpan;
-import android.text.style.RelativeSizeSpan;
-import android.text.style.StyleSpan;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
@@ -143,17 +140,11 @@ class CommentViewHolder
         mImageGetter.bind(tvDesc, item.comment().bodyHtml(), item.comment().id());
 
         // Extra view
-        String login = ApiHelpers.getUserLogin(mContext, user);
-        SpannableStringBuilder userName = new SpannableStringBuilder(login);
-        userName.setSpan(new StyleSpan(Typeface.BOLD), 0, userName.length(), 0);
+        SpannableStringBuilder userName = ApiHelpers.getUserLoginWithType(mContext, user, true);
 
         String association = getAuthorAssociation(item);
         if (association != null) {
-            int start = userName.length();
-            userName.append(" (").append(association).append(")");
-            userName.setSpan(new RelativeSizeSpan(0.85f), start, userName.length(), 0);
-            int color = UiUtils.resolveColor(mContext, android.R.attr.textColorSecondary);
-            userName.setSpan(new ForegroundColorSpan(color), start, userName.length(), 0);
+            StringUtils.addUserTypeSpan(mContext, userName, userName.length(), association);
         }
 
         tvExtra.setText(userName);

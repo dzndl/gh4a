@@ -46,6 +46,7 @@ import com.meisolsson.githubsdk.model.PullRequest;
 import com.meisolsson.githubsdk.model.ReferenceType;
 import com.meisolsson.githubsdk.model.Release;
 import com.meisolsson.githubsdk.model.Repository;
+import com.meisolsson.githubsdk.model.Review;
 import com.meisolsson.githubsdk.model.ReviewComment;
 import com.meisolsson.githubsdk.model.Team;
 import com.meisolsson.githubsdk.model.User;
@@ -65,6 +66,7 @@ import com.meisolsson.githubsdk.model.payload.IssuesPayload;
 import com.meisolsson.githubsdk.model.payload.MemberPayload;
 import com.meisolsson.githubsdk.model.payload.PullRequestPayload;
 import com.meisolsson.githubsdk.model.payload.PullRequestReviewCommentPayload;
+import com.meisolsson.githubsdk.model.payload.PullRequestReviewPayload;
 import com.meisolsson.githubsdk.model.payload.PushPayload;
 import com.meisolsson.githubsdk.model.payload.ReleasePayload;
 import com.meisolsson.githubsdk.model.payload.TeamAddPayload;
@@ -93,7 +95,7 @@ public class EventAdapter extends RootAdapter<GitHubEvent, EventAdapter.EventVie
         AvatarHandler.assignAvatar(holder.ivGravatar, actor);
         holder.ivGravatar.setTag(actor);
 
-        holder.tvActor.setText(ApiHelpers.getUserLogin(mContext, actor));
+        holder.tvActor.setText(ApiHelpers.getUserLoginWithType(mContext, actor));
 
         StringUtils.applyBoldTagsAndSetText(holder.tvTitle, formatTitle(event));
         holder.tvCreatedAt.setText(StringUtils.formatRelativeTime(
@@ -170,7 +172,7 @@ public class EventAdapter extends RootAdapter<GitHubEvent, EventAdapter.EventVie
 
             case ForkEvent: {
                 ForkPayload payload = (ForkPayload) event.payload();
-                return res.getString(R.string.event_fork_desc, formatToRepoName(payload.forkee()));
+                return res.getString(R.string.event_fork_desc, ApiHelpers.formatRepoName(mContext, payload.forkee()));
             }
 
             case GollumEvent: {
@@ -210,6 +212,15 @@ public class EventAdapter extends RootAdapter<GitHubEvent, EventAdapter.EventVie
                 break;
             }
 
+            case PullRequestReviewEvent: {
+                PullRequestReviewPayload payload = (PullRequestReviewPayload) event.payload();
+                Review review = payload.review();
+                String body = review.body();
+                if (body != null) {
+                    return EmojiParser.parseToUnicode(review.body());
+                }
+                break;
+            }
             case PullRequestReviewCommentEvent: {
                 PullRequestReviewCommentPayload payload =
                         (PullRequestReviewCommentPayload) event.payload();
@@ -445,6 +456,15 @@ public class EventAdapter extends RootAdapter<GitHubEvent, EventAdapter.EventVie
                 return res.getString(resId, payload.number(), formatFromRepoIdentifier(eventRepo));
             }
 
+            case PullRequestReviewEvent: {
+                PullRequestReviewPayload payload = (PullRequestReviewPayload) event.payload();
+                PullRequest pr = payload.pullRequest();
+
+                // assuming action is 'created' for now
+                return res.getString(R.string.event_review_title, pr.number(),
+                        formatFromRepoIdentifier(eventRepo));
+            }
+
             case PullRequestReviewCommentEvent: {
                 PullRequestReviewCommentPayload payload =
                         (PullRequestReviewCommentPayload) event.payload();
@@ -482,7 +502,7 @@ public class EventAdapter extends RootAdapter<GitHubEvent, EventAdapter.EventVie
                     Repository repo = payload.repository();
                     if (repo != null) {
                         return res.getString(R.string.event_team_repo_add,
-                                formatToRepoName(repo), team.name());
+                                ApiHelpers.formatRepoName(mContext, repo), team.name());
                     }
                 }
                 break;
@@ -509,13 +529,6 @@ public class EventAdapter extends RootAdapter<GitHubEvent, EventAdapter.EventVie
     private String formatFromRepoIdentifier(GitHubEvent.RepoIdentifier repository) {
         if (repository != null) {
             return repository.repoWithUserName();
-        }
-        return mContext.getString(R.string.deleted);
-    }
-
-    private String formatToRepoName(Repository repository) {
-        if (repository != null && repository.owner() != null) {
-            return repository.owner().login() + "/" + repository.name();
         }
         return mContext.getString(R.string.deleted);
     }

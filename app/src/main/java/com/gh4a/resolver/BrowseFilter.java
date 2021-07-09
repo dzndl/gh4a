@@ -6,7 +6,6 @@ import android.net.Uri;
 import android.os.Bundle;
 import androidx.appcompat.app.AppCompatActivity;
 
-import com.gh4a.Gh4Application;
 import com.gh4a.R;
 import com.gh4a.utils.IntentUtils;
 
@@ -32,23 +31,24 @@ public class BrowseFilter extends AppCompatActivity {
             return;
         }
 
+        int flags = getIntent().getFlags() & ~Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS;
         IntentUtils.InitialCommentMarker initialComment =
                 getIntent().getParcelableExtra(EXTRA_INITIAL_COMMENT);
 
         LinkParser.ParseResult result = LinkParser.parseUri(this, uri, initialComment);
         if (result == null) {
-            IntentUtils.launchBrowser(this, uri);
+            IntentUtils.launchBrowser(this, uri, flags);
             finish();
             return;
         }
 
         if (result.intent != null) {
-            startActivity(result.intent);
+            startActivity(result.intent.setFlags(flags));
             finish();
             return;
         }
 
-        //noinspection ConstantConditions
+        result.loadTask.setIntentFlags(flags);
         result.loadTask.execute();
 
         // Avoid finish() for now

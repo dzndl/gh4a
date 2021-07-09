@@ -2,10 +2,14 @@ package com.gh4a.utils;
 
 import android.content.Context;
 import android.graphics.Color;
+import android.graphics.Typeface;
 import android.net.Uri;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+
+import android.text.SpannableStringBuilder;
 import android.text.TextUtils;
+import android.text.style.StyleSpan;
 
 import com.gh4a.ApiRequestException;
 import com.gh4a.Gh4Application;
@@ -14,8 +18,10 @@ import com.meisolsson.githubsdk.model.Commit;
 import com.meisolsson.githubsdk.model.GitHubCommentBase;
 import com.meisolsson.githubsdk.model.Label;
 import com.meisolsson.githubsdk.model.Page;
+import com.meisolsson.githubsdk.model.Repository;
 import com.meisolsson.githubsdk.model.SearchPage;
 import com.meisolsson.githubsdk.model.User;
+import com.meisolsson.githubsdk.model.UserType;
 import com.meisolsson.githubsdk.model.git.GitUser;
 
 import java.net.HttpURLConnection;
@@ -92,10 +98,49 @@ public class ApiHelpers {
     }
 
     public static String getUserLogin(Context context, User user) {
-        if (user != null && user.login() != null) {
-            return user.login();
+        User actualUser = adjustUserForBotSuffix(user);
+        if (actualUser != null && actualUser.login() != null) {
+            return actualUser.login();
         }
-        return context.getString(R.string.unknown);
+        return context.getString(R.string.deleted);
+    }
+
+    public static SpannableStringBuilder getUserLoginWithType(Context context, User user) {
+        return getUserLoginWithType(context, user, false);
+    }
+
+    public static SpannableStringBuilder getUserLoginWithType(Context context, User user, boolean boldifyLogin) {
+        final SpannableStringBuilder builder = new SpannableStringBuilder(getUserLogin(context, user));
+        if (boldifyLogin) {
+            builder.setSpan(new StyleSpan(Typeface.BOLD), 0, builder.length(), 0);
+        }
+        final User actualUser = adjustUserForBotSuffix(user);
+        if (actualUser != null && actualUser.type() == UserType.Bot) {
+            StringUtils.addUserTypeSpan(context, builder, builder.length(),
+                    context.getString(R.string.user_type_bot));
+        }
+        return builder;
+    }
+
+    private static User adjustUserForBotSuffix(User user) {
+        final String login = user != null ? user.login() : null;
+        if (login != null && login.endsWith("[bot]")) {
+            UserType type = user.type();
+            if (type == null || type == UserType.Bot) {
+                return user.toBuilder()
+                        .login(login.substring(0, login.length() - 5))
+                        .type(UserType.Bot)
+                        .build();
+            }
+        }
+        return user;
+    }
+
+    public static String formatRepoName(Context context, Repository repository) {
+        if (repository == null || TextUtils.isEmpty(repository.name())) {
+            return context.getString(R.string.deleted);
+        }
+        return getUserLogin(context, repository.owner()) + "/" + repository.name();
     }
 
     public static int colorForLabel(Label label) {

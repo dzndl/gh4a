@@ -79,11 +79,17 @@ public class NotificationListFragment extends LoadingListFragmentBase implements
     }
 
     @Override
-    public void onActivityCreated(@Nullable Bundle savedInstanceState) {
-        super.onActivityCreated(savedInstanceState);
-        setContentShown(false);
-        loadNotifications(false);
-        NotificationsWorker.markNotificationsAsSeen(getActivity());
+    public void onStart() {
+        super.onStart();
+        long lastCheck = NotificationsWorker.getLastCheckTimestamp(getActivity());
+        long lastFetch = mNotificationsLoadTime != null ? mNotificationsLoadTime.getTime() : 0;
+        if (lastFetch == 0 || (lastCheck != 0 && lastCheck > lastFetch)) {
+            setContentShown(false);
+            // If we know our last fetch is stale, force the reload to make to to not get
+            // outdated notifications
+            loadNotifications(lastFetch != 0);
+            NotificationsWorker.markNotificationsAsSeen(getActivity());
+        }
     }
 
     @Override
@@ -168,20 +174,11 @@ public class NotificationListFragment extends LoadingListFragmentBase implements
                 mAll = itemId == R.id.notification_filter_all;
                 mParticipating = itemId == R.id.notification_filter_participating;
                 item.setChecked(true);
-                reloadNotification();
+                onRefresh();
                 return true;
         }
 
         return super.onOptionsItemSelected(item);
-    }
-
-    private void reloadNotification() {
-        if (mAdapter != null) {
-            mAdapter.clear();
-        }
-        setContentShown(false);
-        updateMenuItemVisibility();
-        loadNotifications(true);
     }
 
     @Override
@@ -189,9 +186,8 @@ public class NotificationListFragment extends LoadingListFragmentBase implements
         if (notificationHolder.notification == null) {
             final Repository repository = notificationHolder.repository;
 
-            String login = ApiHelpers.getUserLogin(getActivity(), repository.owner());
             String title = getString(R.string.mark_repository_as_read_question,
-                    login + "/" + repository.name());
+                    ApiHelpers.formatRepoName(getActivity(), repository));
 
             ConfirmationDialogFragment.show(this, title,
                     R.string.mark_as_read, repository, "markreadconfirm");
@@ -210,7 +206,8 @@ public class NotificationListFragment extends LoadingListFragmentBase implements
         service.setNotificationThreadSubscription(notification.id(), request)
                 .map(ApiHelpers::throwOnFailure)
                 .compose(RxUtils::doInBackground)
-                .subscribe(result -> handleMarkAsRead(null, notification));
+                .subscribe(result -> handleMarkAsRead(null, notification),
+                        error -> handleActionFailure("Unsubscribing notification failed", error));
     }
 
     @Override
@@ -295,8 +292,8 @@ public class NotificationListFragment extends LoadingListFragmentBase implements
                     mNotificationsLoadTime = result.loadTime;
                     mAdapter.clear();
                     mAdapter.addAll(result.notifications);
-                    setContentShown(true);
                     mAdapter.notifyDataSetChanged();
+                    setContentShown(true);
                     updateEmptyState();
                     updateMenuItemVisibility();
                     if (!mAll && !mParticipating) {

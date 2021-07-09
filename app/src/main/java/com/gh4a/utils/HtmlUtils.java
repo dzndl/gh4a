@@ -279,7 +279,6 @@ public class HtmlUtils {
 
         public Spanned convert() {
             mReader.setContentHandler(this);
-            //noinspection TryWithIdenticalCatches
             try {
                 mReader.parse(new InputSource(new StringReader(mSource)));
             } catch (IOException e) {
@@ -813,7 +812,7 @@ public class HtmlUtils {
             handleEndTag(localName);
         }
 
-        public void characters(char ch[], int start, int length) throws SAXException {
+        public void characters(char[] ch, int start, int length) throws SAXException {
             if (getLast(mSpannableStringBuilder, Pre.class) != null) {
                 /* We're in a pre block, so keep whitespace intact. */
                 for (int i = 0; i < length; i++) {
@@ -857,7 +856,7 @@ public class HtmlUtils {
             mSpannableStringBuilder.append(sb);
         }
 
-        public void ignorableWhitespace(char ch[], int start, int length) throws SAXException {
+        public void ignorableWhitespace(char[] ch, int start, int length) throws SAXException {
         }
 
         public void processingInstruction(String target, String data) throws SAXException {

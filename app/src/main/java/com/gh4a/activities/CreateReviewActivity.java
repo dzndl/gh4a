@@ -11,7 +11,6 @@ import android.view.View;
 import android.widget.ArrayAdapter;
 import android.widget.Spinner;
 
-import com.gh4a.Gh4Application;
 import com.gh4a.R;
 import com.gh4a.ServiceFactory;
 import com.gh4a.utils.ApiHelpers;
@@ -101,7 +100,6 @@ public class CreateReviewActivity extends AppCompatActivity implements
     @Override
     public Single<?> onEditorDoSend(String body) {
         int position = mReviewEventSpinner.getSelectedItemPosition();
-        @SuppressWarnings("ConstantConditions")
         ReviewEventDesc desc = mReviewEventAdapter.getItem(position);
 
         PullRequestReviewService service = ServiceFactory.get(PullRequestReviewService.class, false);

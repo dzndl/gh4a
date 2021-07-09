@@ -87,7 +87,7 @@ public class AvatarHandler {
                     applyAvatarToView(view, bitmap);
                 }
             }
-            sRequests.delete(requestId);
+            sRequests.remove(requestId);
         }
     };
 
@@ -252,7 +252,7 @@ public class AvatarHandler {
                     if (sWorkerHandler != null) {
                         sWorkerHandler.removeMessages(MSG_LOAD, request.url);
                     }
-                    sRequests.delete(sRequests.keyAt(i));
+                    sRequests.removeAt(i);
                 }
                 return;
             }
@@ -283,7 +283,7 @@ public class AvatarHandler {
 
         final int widthRatio = options.outWidth / sMaxImageSizePx;
         final int heightRatio = options.outHeight / sMaxImageSizePx;
-        options.inSampleSize = heightRatio < widthRatio ? heightRatio : widthRatio;
+        options.inSampleSize = Math.min(heightRatio, widthRatio);
 
         Bitmap unscaled = BitmapFactory.decodeByteArray(data, 0, data.length, options);
         if (unscaled == null) {

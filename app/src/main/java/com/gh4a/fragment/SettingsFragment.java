@@ -24,6 +24,7 @@ import android.widget.TextView;
 import com.gh4a.Gh4Application;
 import com.gh4a.R;
 import com.gh4a.activities.IssueListActivity;
+import com.gh4a.activities.RepositoryActivity;
 import com.gh4a.worker.NotificationsWorker;
 import com.gh4a.widget.IntegerListPreference;
 
@@ -64,13 +65,8 @@ public class SettingsFragment extends PreferenceFragmentCompat implements
     public void onCreatePreferences(Bundle savedInstanceState, String rootKey) {
         getPreferenceManager().setSharedPreferencesName(PREF_NAME);
         addPreferencesFromResource(R.xml.settings);
-    }
 
-    @Override
-    public void onActivityCreated(Bundle savedInstanceState) {
-        super.onActivityCreated(savedInstanceState);
-
-        mThemePref = (IntegerListPreference) findPreference(KEY_THEME);
+        mThemePref = findPreference(KEY_THEME);
         mThemePref.setOnPreferenceChangeListener(this);
 
         mAboutPref = findPreference(KEY_ABOUT);
@@ -80,11 +76,10 @@ public class SettingsFragment extends PreferenceFragmentCompat implements
         mOpenSourcePref = findPreference(KEY_OPEN_SOURCE_COMPONENTS);
         mOpenSourcePref.setOnPreferenceClickListener(this);
 
-        mNotificationsPref = (TwoStatePreference) findPreference(KEY_NOTIFICATIONS);
+        mNotificationsPref = findPreference(KEY_NOTIFICATIONS);
         mNotificationsPref.setOnPreferenceChangeListener(this);
 
-        mNotificationIntervalPref =
-                (IntegerListPreference) findPreference(KEY_NOTIFICATION_INTERVAL);
+        mNotificationIntervalPref = findPreference(KEY_NOTIFICATION_INTERVAL);
         mNotificationIntervalPref.setOnPreferenceChangeListener(this);
     }
 
@@ -181,6 +176,8 @@ public class SettingsFragment extends PreferenceFragmentCompat implements
             } else {
                 newIssueButton.setVisibility(View.GONE);
             }
+
+            findViewById(R.id.btn_gh4a).setOnClickListener(this);
         }
 
         @Override
@@ -200,6 +197,11 @@ public class SettingsFragment extends PreferenceFragmentCompat implements
                 context.startActivity(chooserIntent);
             } else if (id == R.id.btn_by_gh4a) {
                 Intent intent = IssueListActivity.makeIntent(context,
+                        context.getString(R.string.my_username),
+                        context.getString(R.string.my_repo));
+                context.startActivity(intent);
+            } else if (id == R.id.btn_gh4a) {
+                Intent intent = RepositoryActivity.makeIntent(context,
                         context.getString(R.string.my_username),
                         context.getString(R.string.my_repo));
                 context.startActivity(intent);

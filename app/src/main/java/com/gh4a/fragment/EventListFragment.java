@@ -38,12 +38,14 @@ import com.gh4a.activities.IssueListActivity;
 import com.gh4a.activities.PullRequestActivity;
 import com.gh4a.activities.ReleaseInfoActivity;
 import com.gh4a.activities.RepositoryActivity;
+import com.gh4a.activities.ReviewActivity;
 import com.gh4a.activities.UserActivity;
 import com.gh4a.activities.WikiListActivity;
 import com.gh4a.adapter.EventAdapter;
 import com.gh4a.adapter.RootAdapter;
 import com.gh4a.resolver.CommitCommentLoadTask;
 import com.gh4a.resolver.PullRequestReviewCommentLoadTask;
+import com.gh4a.utils.ApiHelpers;
 import com.gh4a.utils.IntentUtils;
 import com.gh4a.utils.Optional;
 import com.gh4a.utils.RxUtils;
@@ -74,6 +76,7 @@ import com.meisolsson.githubsdk.model.payload.IssueCommentPayload;
 import com.meisolsson.githubsdk.model.payload.IssuesPayload;
 import com.meisolsson.githubsdk.model.payload.PullRequestPayload;
 import com.meisolsson.githubsdk.model.payload.PullRequestReviewCommentPayload;
+import com.meisolsson.githubsdk.model.payload.PullRequestReviewPayload;
 import com.meisolsson.githubsdk.model.payload.PushPayload;
 import com.meisolsson.githubsdk.model.payload.ReleasePayload;
 
@@ -168,9 +171,7 @@ public abstract class EventListFragment extends PagedDataBaseFragment<GitHubEven
             case DownloadEvent: {
                 DownloadPayload payload = (DownloadPayload) event.payload();
                 Download download = payload.download();
-                UiUtils.enqueueDownloadWithPermissionCheck((BaseActivity) getActivity(),
-                        download.htmlUrl(), download.contentType(),
-                        download.name(), download.description(), null);
+                UiUtils.enqueueDownloadWithPermissionCheck((BaseActivity) getActivity(), download);
                 break;
             }
 
@@ -247,6 +248,13 @@ public abstract class EventListFragment extends PagedDataBaseFragment<GitHubEven
                 PullRequestPayload payload = (PullRequestPayload) event.payload();
                 intent = PullRequestActivity.makeIntent(getActivity(),
                         repoOwner, repoName, payload.number());
+                break;
+            }
+
+            case PullRequestReviewEvent: {
+                PullRequestReviewPayload payload = (PullRequestReviewPayload) event.payload();
+                intent = ReviewActivity.makeIntent(getActivity(), repoOwner, repoName,
+                        payload.pullRequest().number(), payload.review(), null);
                 break;
             }
 
@@ -380,7 +388,7 @@ public abstract class EventListFragment extends PagedDataBaseFragment<GitHubEven
                 ForkPayload payload = (ForkPayload) event.payload();
                 Repository forkee = payload.forkee();
                 if (forkee != null) {
-                    menu.add(getString(R.string.menu_fork, forkee.owner().login() + "/" + forkee.name()))
+                    menu.add(getString(R.string.menu_fork, ApiHelpers.formatRepoName(getActivity(), forkee)))
                             .setIntent(RepositoryActivity.makeIntent(getActivity(), forkee));
                 }
                 break;
@@ -473,16 +481,18 @@ public abstract class EventListFragment extends PagedDataBaseFragment<GitHubEven
             if (event.type() == GitHubEventType.ReleaseEvent) {
                 ReleasePayload payload = (ReleasePayload) event.payload();
                 ReleaseAsset asset = payload.release().assets().get(id - MENU_DOWNLOAD_START);
-                UiUtils.enqueueDownloadWithPermissionCheck((BaseActivity) getActivity(),
-                        asset.url(), asset.contentType(),
-                        asset.name(), asset.label(), null);
+                UiUtils.enqueueDownloadWithPermissionCheck((BaseActivity) getActivity(), asset);
             } else if (event.type() == GitHubEventType.DownloadEvent) {
                 DownloadPayload payload = (DownloadPayload) event.payload();
                 Download download = payload.download();
-                UiUtils.enqueueDownloadWithPermissionCheck((BaseActivity) getActivity(),
-                        download.htmlUrl(), download.contentType(),
-                        download.name(), download.description(), null);
-            }
+                UiUtils.enqueueDownloadWithPermissionCheck((BaseActivity) getActivity(), download);
+                }
+            return true;
+        }
+
+        Intent intent = item.getIntent();
+        if (intent != null) {
+            getActivity().startActivity(intent);
             return true;
         }
 

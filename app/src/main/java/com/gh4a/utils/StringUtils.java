@@ -16,11 +16,14 @@
 package com.gh4a.utils;
 
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.graphics.Typeface;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import android.text.SpannableStringBuilder;
 import android.text.format.DateUtils;
+import android.text.style.ForegroundColorSpan;
+import android.text.style.RelativeSizeSpan;
 import android.util.Base64;
 
 import com.gh4a.Gh4Application;
@@ -29,6 +32,8 @@ import com.gh4a.widget.StyleableTextView;
 import com.meisolsson.githubsdk.model.User;
 
 import java.util.Date;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -94,6 +99,9 @@ public class StringUtils {
     }
 
     public static CharSequence formatRelativeTime(Context context, Date date, boolean showDateIfLongAgo) {
+        if (date == null) {
+            return null;
+        }
         long now = System.currentTimeMillis();
         long time = date.getTime();
         long duration = Math.abs(now - time);
@@ -132,11 +140,20 @@ public class StringUtils {
 
                 pos = end + 4;
             } else {
-                ssb.append(input.substring(pos, input.length()));
+                ssb.append(input.substring(pos));
                 pos = -1;
             }
         }
         return ssb;
+    }
+
+    public static void addUserTypeSpan(Context context, SpannableStringBuilder builder,
+                                       int pos, String userType) {
+        builder.insert(pos, " (" + userType + ")");
+        int typeLength = userType.length() + 3;
+        builder.setSpan(new RelativeSizeSpan(0.85f), pos, pos + typeLength, 0);
+        int color = UiUtils.resolveColor(context, android.R.attr.textColorSecondary);
+        builder.setSpan(new ForegroundColorSpan(color), pos, pos + typeLength, 0);
     }
 
     @Nullable
@@ -177,5 +194,10 @@ public class StringUtils {
 
     public static String fromBase64(String encoded) {
         return new String(Base64.decode(encoded, Base64.DEFAULT));
+    }
+
+    public static Set<String> getEditableStringSetFromPrefs(SharedPreferences prefs, String key) {
+        final Set<String> value = prefs.getStringSet(key, null);
+        return value != null ? new HashSet<>(value) : new HashSet<>();
     }
 }

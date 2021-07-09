@@ -21,10 +21,14 @@ import android.content.DialogInterface;
 import android.content.Intent;
 import android.graphics.Typeface;
 import android.os.Bundle;
+
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.IdRes;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
+import com.gh4a.utils.ActivityResultHelpers;
 import com.google.android.material.appbar.AppBarLayout;
 
 import androidx.appcompat.view.ContextThemeWrapper;
@@ -76,7 +80,6 @@ import com.meisolsson.githubsdk.service.repositories.RepositoryContentService;
 
 import java.net.HttpURLConnection;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
@@ -115,14 +118,20 @@ public class IssueEditActivity extends BasePagerActivity implements
         void handleLoad(List<Milestone> milestones);
     }
 
-    private static final int REQUEST_MANAGE_LABELS = 1000;
-    private static final int REQUEST_MANAGE_MILESTONES = 1001;
-
     private static final int ID_LOADER_COLLABORATOR_STATUS = 0;
 
     private static final int[] TITLES = {
         R.string.issue_body, R.string.preview, R.string.settings
     };
+
+    private final ActivityResultLauncher<Intent> mLabelManagerLauncher = registerForActivityResult(
+            new ActivityResultContracts.StartActivityForResult(),
+            new ActivityResultHelpers.ActivityResultSuccessCallback(() -> mLabelSingle = null)
+    );
+    private final ActivityResultLauncher<Intent> mMilestoneManagerLauncher = registerForActivityResult(
+            new ActivityResultContracts.StartActivityForResult(),
+            new ActivityResultHelpers.ActivityResultSuccessCallback(() -> mMilestoneSingle = null)
+    );
 
     private String mRepoOwner;
     private String mRepoName;
@@ -357,23 +366,6 @@ public class IssueEditActivity extends BasePagerActivity implements
         return IssueActivity.makeIntent(this, mRepoOwner, mRepoName, mEditIssue.number());
     }
 
-    @Override
-    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        if (requestCode == REQUEST_MANAGE_LABELS) {
-            if (resultCode == RESULT_OK) {
-                // Require reload of labels
-                mLabelSingle = null;
-            }
-        } else if (requestCode == REQUEST_MANAGE_MILESTONES) {
-            if (resultCode == RESULT_OK) {
-                // Require reload of milestones
-                mMilestoneSingle = null;
-            }
-        } else {
-            super.onActivityResult(requestCode, resultCode, data);
-        }
-    }
-
     private void showMilestonesDialog() {
         loadMilestones(milestones -> {
             MilestoneEditDialogFragment
@@ -426,13 +418,13 @@ public class IssueEditActivity extends BasePagerActivity implements
     private void manageMilestones() {
         Intent intent = IssueMilestoneListActivity.makeIntent(this, mRepoOwner, mRepoName,
                 mEditIssue.pullRequest() != null);
-        startActivityForResult(intent, REQUEST_MANAGE_MILESTONES);
+        mMilestoneManagerLauncher.launch(intent);
     }
 
     private void manageLabels() {
         Intent intent = IssueLabelListActivity.makeIntent(this, mRepoOwner, mRepoName,
                 mEditIssue.pullRequest() != null);
-        startActivityForResult(intent, REQUEST_MANAGE_LABELS);
+        mLabelManagerLauncher.launch(intent);
     }
 
     private void updateOptionViews() {
@@ -593,8 +585,14 @@ public class IssueEditActivity extends BasePagerActivity implements
                         if (templates.size() == 1) {
                             handleIssueTemplateSelected(templates.get(0));
                         } else {
+                            List<IssueTemplate> namedTemplates = new ArrayList<>();
+                            for (IssueTemplate t : templates) {
+                                if (t.name != null) {
+                                    namedTemplates.add(t);
+                                }
+                            }
                             IssueTemplateSelectionDialogFragment f =
-                                    IssueTemplateSelectionDialogFragment.newInstance(templates);
+                                    IssueTemplateSelectionDialogFragment.newInstance(namedTemplates);
                             f.show(getSupportFragmentManager(), "template-selection");
                         }
                     } else {
@@ -655,7 +653,7 @@ public class IssueEditActivity extends BasePagerActivity implements
                         return ApiHelpers.PageIterator
                                 .toSingle(page -> service.getDirectoryContents(mRepoOwner, mRepoName, content.path(), null, page));
                     } else {
-                        return Single.just(Arrays.asList(content));
+                        return Single.just(Collections.singletonList(content));
                     }
                 }))
                 .map(contentsOpt -> contentsOpt.map(contents -> {
@@ -674,7 +672,6 @@ public class IssueEditActivity extends BasePagerActivity implements
                     }
                     return Flowable.fromIterable(result)
                             .flatMap(flowable -> flowable.toFlowable())
-                            .filter(template -> template != null)
                             .toList();
                 }))
                 .compose(RxUtils::doInBackground)
@@ -685,7 +682,7 @@ public class IssueEditActivity extends BasePagerActivity implements
         return service.getContents(mRepoOwner, mRepoName, content.path(), null)
             .map(ApiHelpers::throwOnFailure)
             .map(fileContent -> StringUtils.fromBase64(fileContent.content()))
-            .map(contentString -> IssueTemplate.parse(contentString))
+            .map(contentString -> new IssueTemplate(contentString))
             .compose(RxUtils::doInBackground);
     }
 
@@ -700,12 +697,7 @@ public class IssueEditActivity extends BasePagerActivity implements
         final List<String> defaultLabels = new ArrayList<>();
         final List<String> defaultAssignees = new ArrayList<>();
 
-        public static IssueTemplate parse(String contentString) {
-            IssueTemplate t = new IssueTemplate(contentString);
-            return t.name != null ? t : null;
-        }
-
-        private IssueTemplate(String contentString) {
+        IssueTemplate(String contentString) {
             Matcher matcher = FRONT_MATTER_PATTERN.matcher(contentString);
             if (matcher.matches()) {
                 content = matcher.group(6);

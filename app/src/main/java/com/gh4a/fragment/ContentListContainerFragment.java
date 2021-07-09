@@ -7,6 +7,8 @@ import androidx.annotation.Nullable;
 import androidx.fragment.app.Fragment;
 import androidx.fragment.app.FragmentManager;
 import androidx.fragment.app.FragmentTransaction;
+import androidx.loader.app.LoaderManager;
+
 import android.text.TextUtils;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -81,16 +83,16 @@ public class ContentListContainerFragment extends Fragment implements
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        mRxLoader = new RxLoader(getActivity(), getLoaderManager());
+        mRxLoader = new RxLoader(getActivity(), LoaderManager.getInstance(this));
         mRepository = getArguments().getParcelable("repository");
         mSelectedRef = getArguments().getString("ref");
         mStateSaved = false;
 
         mCacheFragment = (ContentListCacheFragment)
-                getFragmentManager().findFragmentByTag("content_list_cache");
+                getParentFragmentManager().findFragmentByTag("content_list_cache");
         if (mCacheFragment == null) {
             mCacheFragment = new ContentListCacheFragment();
-            getFragmentManager().beginTransaction()
+            getParentFragmentManager().beginTransaction()
                     .add(mCacheFragment, "content_list_cache")
                     .commitAllowingStateLoss();
         }
@@ -199,7 +201,7 @@ public class ContentListContainerFragment extends Fragment implements
             return;
         }
         mCacheFragment.addToCache(fragment.getPath(), contents);
-        if (fragment.getPath() == null) {
+        if (TextUtils.isEmpty(fragment.getPath())) {
             for (Content content : contents) {
                 if (content.type() == ContentType.File && content.name().equals(".gitmodules")) {
                     loadModuleMap();
@@ -255,7 +257,7 @@ public class ContentListContainerFragment extends Fragment implements
             return null;
         }
 
-        String prefix = fragment.getPath() == null ? null : (fragment.getPath() + "/");
+        String prefix = TextUtils.isEmpty(fragment.getPath()) ? null : fragment.getPath() + "/";
         Set<String> names = new HashSet<>();
         for (String name : mGitModuleMap.keySet()) {
             if (prefix == null && !name.contains("/")) {

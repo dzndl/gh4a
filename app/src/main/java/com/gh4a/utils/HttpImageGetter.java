@@ -39,7 +39,6 @@ import android.view.WindowManager;
 import android.widget.TextView;
 
 import com.caverock.androidsvg.SVG;
-import com.caverock.androidsvg.SVGParseException;
 import com.gh4a.R;
 import com.gh4a.ServiceFactory;
 import com.gh4a.fragment.SettingsFragment;
@@ -186,7 +185,7 @@ public class HttpImageGetter {
                     }
                     mTask = new ImageGetterAsyncTask(HttpImageGetter.this, this);
                     mTask.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR,
-                            imagesToLoad.toArray(new PlaceholderDrawable[imagesToLoad.size()]));
+                            imagesToLoad.toArray(new PlaceholderDrawable[0]));
                 }
                 mHasStartedImageLoad = true;
             }
@@ -559,7 +558,6 @@ public class HttpImageGetter {
 
     private static Bitmap renderSvgToBitmap(Resources res, InputStream is,
             int maxWidth, int maxHeight) {
-        //noinspection TryWithIdenticalCatches
         try {
             SVG svg = SVG.getFromInputStream(is);
             if (svg != null) {
@@ -606,7 +604,7 @@ public class HttpImageGetter {
                 svg.renderToCanvas(canvas);
                 return bitmap;
             }
-        } catch (SVGParseException e) {
+        } catch (Exception e) {
             // fall through
         }
         return null;

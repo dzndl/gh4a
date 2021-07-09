@@ -15,10 +15,12 @@
  */
 package com.gh4a.fragment;
 
-import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Bundle;
+
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.recyclerview.widget.RecyclerView;
 import android.view.ContextMenu;
 import android.view.LayoutInflater;
@@ -31,6 +33,7 @@ import com.gh4a.ServiceFactory;
 import com.gh4a.activities.CommitActivity;
 import com.gh4a.adapter.CommitAdapter;
 import com.gh4a.adapter.RootAdapter;
+import com.gh4a.utils.ActivityResultHelpers;
 import com.gh4a.utils.ApiHelpers;
 import com.gh4a.utils.StringUtils;
 import com.gh4a.widget.ContextMenuAwareRecyclerView;
@@ -50,9 +53,6 @@ public class CommitListFragment extends PagedDataBaseFragment<Commit> {
         void onCommitSelectedAsBase(Commit commit);
     }
 
-    private static final int REQUEST_COMMIT = 2000;
-    private static final int MENU_SELECT_AS_BASE = Menu.FIRST + 2;
-
     private String mRepoOwner;
     private String mRepoName;
     private String mRef;
@@ -60,6 +60,11 @@ public class CommitListFragment extends PagedDataBaseFragment<Commit> {
 
     private CommitAdapter mAdapter;
     private ContextSelectionCallback mCallback;
+
+    private final ActivityResultLauncher<Intent> mCommitLauncher = registerForActivityResult(
+            new ActivityResultContracts.StartActivityForResult(),
+            new ActivityResultHelpers.ActivityResultSuccessCallback(() -> onRefresh())
+    );
 
     public static CommitListFragment newInstance(Repository repo, String ref) {
         return newInstance(repo.owner().login(), repo.name(),
@@ -119,14 +124,14 @@ public class CommitListFragment extends PagedDataBaseFragment<Commit> {
         String[] urlPart = commit.url().split("/");
         Intent intent = CommitActivity.makeIntent(getActivity(),
                 urlPart[4], urlPart[5], commit.sha());
-        startActivityForResult(intent, REQUEST_COMMIT);
+        mCommitLauncher.launch(intent);
     }
 
     @Override
     public void onCreateContextMenu(ContextMenu menu, View v, ContextMenu.ContextMenuInfo menuInfo) {
         super.onCreateContextMenu(menu, v, menuInfo);
 
-        menu.add(Menu.NONE, MENU_SELECT_AS_BASE, Menu.NONE, R.string.commit_use_as_ref);
+        menu.add(Menu.NONE, R.id.select_as_branch_ref, Menu.NONE, R.string.commit_use_as_ref);
     }
 
     @Override
@@ -137,25 +142,13 @@ public class CommitListFragment extends PagedDataBaseFragment<Commit> {
             return false;
         }
 
-        if (item.getItemId() == MENU_SELECT_AS_BASE) {
+        if (item.getItemId() == R.id.select_as_branch_ref) {
             Commit commit = mAdapter.getItemFromAdapterPosition(info.position);
             mCallback.onCommitSelectedAsBase(commit);
             return true;
         }
 
         return super.onContextItemSelected(item);
-    }
-
-    @Override
-    public void onActivityResult(int requestCode, int resultCode, Intent data) {
-        if (requestCode == REQUEST_COMMIT) {
-            if (resultCode == Activity.RESULT_OK) {
-                // comments were updated
-                onRefresh();
-            }
-        } else {
-            super.onActivityResult(requestCode, resultCode, data);
-        }
     }
 
     @Override
