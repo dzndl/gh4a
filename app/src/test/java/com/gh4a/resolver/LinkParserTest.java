@@ -2,9 +2,7 @@ package com.gh4a.resolver;
 
 import android.net.Uri;
 import android.os.Bundle;
-import androidx.fragment.app.FragmentActivity;
 
-import com.gh4a.BuildConfig;
 import com.gh4a.activities.BlogListActivity;
 import com.gh4a.activities.CommitActivity;
 import com.gh4a.activities.CompareActivity;
@@ -14,11 +12,14 @@ import com.gh4a.activities.IssueEditActivity;
 import com.gh4a.activities.IssueListActivity;
 import com.gh4a.activities.OrganizationMemberListActivity;
 import com.gh4a.activities.PullRequestActivity;
+import com.gh4a.activities.ReleaseInfoActivity;
 import com.gh4a.activities.ReleaseListActivity;
 import com.gh4a.activities.RepositoryActivity;
+import com.gh4a.activities.TimelineActivity;
 import com.gh4a.activities.TrendingActivity;
 import com.gh4a.activities.UserActivity;
 import com.gh4a.activities.WikiListActivity;
+import com.gh4a.activities.home.HomeActivity;
 import com.gh4a.utils.IntentUtils;
 
 import org.junit.Before;
@@ -26,18 +27,17 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.Robolectric;
 import org.robolectric.RobolectricTestRunner;
-import org.robolectric.annotation.Config;
 
-import static org.hamcrest.Matchers.instanceOf;
-import static org.hamcrest.Matchers.isEmptyString;
-import static org.hamcrest.Matchers.notNullValue;
-import static org.hamcrest.Matchers.nullValue;
+import androidx.fragment.app.FragmentActivity;
+
+import static org.hamcrest.CoreMatchers.equalTo;
+import static org.hamcrest.CoreMatchers.instanceOf;
+import static org.hamcrest.CoreMatchers.notNullValue;
+import static org.hamcrest.CoreMatchers.nullValue;
+import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.core.Is.is;
-import static org.junit.Assert.assertThat;
 
-@SuppressWarnings("ConstantConditions")
 @RunWith(RobolectricTestRunner.class)
-@Config(constants = BuildConfig.class)
 public class LinkParserTest {
     private FragmentActivity mActivity;
 
@@ -61,7 +61,7 @@ public class LinkParserTest {
     }
 
     @Test
-    public void linkToGist_withUserInPath__opensGistActivity() throws Exception {
+    public void linkToGist_withUserInPath__opensGistActivity() {
         LinkParser.ParseResult result = parseLink("https://gist.github.com/user/gistId");
         assertRedirectsTo(result, GistActivity.class);
         Bundle extras = result.intent.getExtras();
@@ -70,41 +70,100 @@ public class LinkParserTest {
     }
 
     @Test
-    public void githubLink__opensMainActivity() {
+    public void githubDotComLink__opensBrowser() {
         assertRedirectsToBrowser(parseLink("https://github.com"));
     }
 
     @Test
-    public void reservedPaths__openBrowser() {
-        String[] reservedPaths = {
-                "apps", "integrations", "login", "logout", "marketplace", "sessions", "settings",
-                "updates", "support", "contact", "about", "personal", "open-source", "business",
-                "site", "security", "features"
-        };
-        for (String reservedPath : reservedPaths) {
-            assertRedirectsToBrowser(parseLink("https://github.com/" + reservedPath));
-        }
+    public void linkToReservedPath__opensBrowser() {
+        assertRedirectsToBrowser(parseLink("https://github.com/settings"));
     }
 
     @Test
-    public void exploreLink__opensTrendingActivity() throws Exception {
-        assertRedirectsTo(parseLink("https://github.com/explore"), TrendingActivity.class);
+    public void timelineLink__opensTimelineActivity() {
+        assertRedirectsTo(parseLink("https://github.com/timeline"), TimelineActivity.class);
     }
 
     @Test
-    public void blogLink__opensBlogListActivity() throws Exception {
+    public void trendingLink__opensTrendingActivity() {
+        assertRedirectsTo(parseLink("https://github.com/trending"), TrendingActivity.class);
+    }
+
+    @Test
+    public void repositoriesLink__opensTrendingActivity() {
+        assertRedirectsTo(parseLink("https://github.com/repositories"), TrendingActivity.class);
+    }
+
+    @Test
+    public void starsLink__opensHomeActivity_onBookmarksAndStarsSection() {
+        LinkParser.ParseResult result = parseLink("https://github.com/stars");
+        assertRedirectsTo(result, HomeActivity.class);
+        Bundle extras = result.intent.getExtras();
+        assertThat("Redirected to wrong HomeActivity section", extras.getString("initial_page"), is("bookmarks"));
+    }
+
+    @Test
+    public void gistsLink__opensHomeActivity_onGistsSection() {
+        LinkParser.ParseResult result = parseLink("https://github.com/gists");
+        assertRedirectsTo(result, HomeActivity.class);
+        Bundle extras = result.intent.getExtras();
+        assertThat("Redirected to wrong HomeActivity section", extras.getString("initial_page"), is("gists"));
+    }
+
+    @Test
+    public void notificationsLink__opensHomeActivity_onNotificationsSection() {
+        LinkParser.ParseResult result = parseLink("https://github.com/notifications");
+        assertRedirectsTo(result, HomeActivity.class);
+        Bundle extras = result.intent.getExtras();
+        assertThat("Redirected to wrong HomeActivity section", extras.getString("initial_page"), is("notifications"));
+    }
+
+    @Test
+    public void issuesLink__opensHomeActivity_onMyIssuesSection() {
+        LinkParser.ParseResult result = parseLink("https://github.com/issues");
+        assertRedirectsTo(result, HomeActivity.class);
+        Bundle extras = result.intent.getExtras();
+        assertThat("Redirected to wrong HomeActivity section", extras.getString("initial_page"), is("issues"));
+    }
+
+    @Test
+    public void pullsLink__opensHomeActivity_onMyPullRequestsSection() {
+        LinkParser.ParseResult result = parseLink("https://github.com/pulls");
+        assertRedirectsTo(result, HomeActivity.class);
+        Bundle extras = result.intent.getExtras();
+        assertThat("Redirected to wrong HomeActivity section", extras.getString("initial_page"), is("prs"));
+    }
+
+    @Test
+    public void dashboardLink__opensHomeActivity_onNewsFeedSection() {
+        LinkParser.ParseResult result = parseLink("https://github.com/dashboard");
+        assertRedirectsTo(result, HomeActivity.class);
+        Bundle extras = result.intent.getExtras();
+        assertThat("Redirected to wrong HomeActivity section", extras.getString("initial_page"), is("newsfeed"));
+    }
+
+    @Test
+    public void dashboardFeedLink__opensHomeActivity_onNewsFeedSection() {
+        LinkParser.ParseResult result = parseLink("https://github.com/dashboard-feed");
+        assertRedirectsTo(result, HomeActivity.class);
+        Bundle extras = result.intent.getExtras();
+        assertThat("Redirected to wrong HomeActivity section", extras.getString("initial_page"), is("newsfeed"));
+    }
+
+    @Test
+    public void blogLink__opensBlogListActivity() {
         assertRedirectsTo(parseLink("https://github.com/blog"), BlogListActivity.class);
         assertRedirectsTo(parseLink("https://blog.github.com"), BlogListActivity.class);
     }
 
     @Test
-    public void blogLink_withBlogInPath__opensBrowser() throws Exception {
+    public void blogLink_withBlogInPath__opensBrowser() {
         assertRedirectsToBrowser(parseLink("https://github.com/blog/blog-title"));
         assertRedirectsToBrowser(parseLink("https://blog.github.com/blog-title"));
     }
 
     @Test
-    public void organizationLink__opensUserActivity() throws Exception {
+    public void organizationLink__opensUserActivity() {
         LinkParser.ParseResult result = parseLink("https://github.com/orgs/android");
         assertRedirectsTo(result, UserActivity.class);
         Bundle extras = result.intent.getExtras();
@@ -113,13 +172,7 @@ public class LinkParserTest {
     }
 
     @Test
-    public void organizationLink_withoutName__opensBrowser() throws Exception {
-        assertRedirectsToBrowser(parseLink("https://github.com/orgs"));
-    }
-
-    @Test
-    public void organisationLink_leadingToMembers__opensOrganizationMemberListActivity()
-            throws Exception {
+    public void organizationLink_leadingToMembers__opensOrganizationMemberListActivity() {
         LinkParser.ParseResult result = parseLink("https://github.com/orgs/android/people");
         assertRedirectsTo(result, OrganizationMemberListActivity.class);
         Bundle extras = result.intent.getExtras();
@@ -127,8 +180,25 @@ public class LinkParserTest {
         assertThat("Organization name is incorrect", extras.getString("login"), is("android"));
     }
 
+    public void organizationLink_leadingToRepositories__loadsOrganizationRepos() {
+        LinkParser.ParseResult result = parseLink("https://github.com/orgs/android/repositories/");
+        UserReposLoadTask loadTask = assertThatLoadTaskIs(result.loadTask, UserReposLoadTask.class);
+        assertThat("Loading starred repos is set to true", loadTask.mShowStars, is(false));
+        assertThat("User name is incorrect", loadTask.mUserLogin, is("android"));
+    }
+
     @Test
-    public void userLink__opensUserActivity() throws Exception {
+    public void organizationLink_leadingToAnotherSubPage__opensBrowser() {
+        assertRedirectsToBrowser(parseLink("https://github.com/orgs/community/discussions/"));
+    }
+
+    @Test
+    public void organizationLink_withoutName__opensBrowser() {
+        assertRedirectsToBrowser(parseLink("https://github.com/orgs"));
+    }
+
+    @Test
+    public void userLink__opensUserActivity() {
         LinkParser.ParseResult result = parseLink("https://github.com/slapperwan");
         assertRedirectsTo(result, UserActivity.class);
         Bundle extras = result.intent.getExtras();
@@ -137,7 +207,7 @@ public class LinkParserTest {
     }
 
     @Test
-    public void userLink_withRepositoriesTab__loadsUserRepos() throws Exception {
+    public void userLink_withRepositoriesTab__loadsUserRepos() {
         LinkParser.ParseResult result = parseLink("https://github.com/slapperwan?tab=repositories");
         UserReposLoadTask loadTask = assertThatLoadTaskIs(result.loadTask, UserReposLoadTask.class);
         assertThat("Loading starred repos is set to true", loadTask.mShowStars, is(false));
@@ -145,7 +215,7 @@ public class LinkParserTest {
     }
 
     @Test
-    public void userLink_withStarsTab__loadsUserStarredRepos() throws Exception {
+    public void userLink_withStarsTab__loadsUserStarredRepos() {
         LinkParser.ParseResult result = parseLink("https://github.com/slapperwan?tab=stars");
         UserReposLoadTask loadTask = assertThatLoadTaskIs(result.loadTask, UserReposLoadTask.class);
         assertThat("Loading starred repos is set to false", loadTask.mShowStars, is(true));
@@ -153,7 +223,7 @@ public class LinkParserTest {
     }
 
     @Test
-    public void userLink_withFollowersTab__loadsUserFollowers() throws Exception {
+    public void userLink_withFollowersTab__loadsUserFollowers() {
         LinkParser.ParseResult result = parseLink("https://github.com/slapperwan?tab=followers");
         UserFollowersLoadTask loadTask =
                 assertThatLoadTaskIs(result.loadTask, UserFollowersLoadTask.class);
@@ -162,7 +232,7 @@ public class LinkParserTest {
     }
 
     @Test
-    public void userLink_withFollowingTab__loadsUserFollows() throws Exception {
+    public void userLink_withFollowingTab__loadsUserFollows() {
         LinkParser.ParseResult result = parseLink("https://github.com/slapperwan?tab=following");
         UserFollowersLoadTask loadTask =
                 assertThatLoadTaskIs(result.loadTask, UserFollowersLoadTask.class);
@@ -171,7 +241,7 @@ public class LinkParserTest {
     }
 
     @Test
-    public void userLink_withUnknownTab__opensUserActivity() throws Exception {
+    public void userLink_withUnknownTab__opensUserActivity() {
         LinkParser.ParseResult result = parseLink("https://github.com/slapperwan?tab=unknown");
         assertRedirectsTo(result, UserActivity.class);
         Bundle extras = result.intent.getExtras();
@@ -180,7 +250,7 @@ public class LinkParserTest {
     }
 
     @Test
-    public void repositoryLink__opensRepositoryActivity() throws Exception {
+    public void repositoryLink__opensRepositoryActivity() {
         LinkParser.ParseResult result = parseLink("https://github.com/slapperwan/gh4a");
         assertRedirectsTo(result, RepositoryActivity.class);
         Bundle extras = result.intent.getExtras();
@@ -194,7 +264,7 @@ public class LinkParserTest {
     }
 
     @Test
-    public void releasesLink__opensReleaseListActivity() throws Exception {
+    public void releasesLink__opensReleaseListActivity() {
         LinkParser.ParseResult result = parseLink("https://github.com/slapperwan/gh4a/releases");
         assertRedirectsTo(result, ReleaseListActivity.class);
         Bundle extras = result.intent.getExtras();
@@ -204,7 +274,12 @@ public class LinkParserTest {
     }
 
     @Test
-    public void releaseLink_withoutTagId__opensReleaseListActivity() throws Exception {
+    public void releaseAssetLink__opensBrowser() {
+        assertRedirectsToBrowser(parseLink("https://github.com/slapperwan/gh4a/releases/download/4.6.7/release.apk"));
+    }
+
+    @Test
+    public void releaseLink_withoutTagId__opensReleaseListActivity() {
         LinkParser.ParseResult result =
                 parseLink("https://github.com/slapperwan/gh4a/releases/tag");
         assertRedirectsTo(result, ReleaseListActivity.class);
@@ -215,17 +290,19 @@ public class LinkParserTest {
     }
 
     @Test
-    public void releaseLink_withTagId__loadsRelease() throws Exception {
+    public void releaseLink_withTagName__opensReleaseActivity() {
         LinkParser.ParseResult result =
                 parseLink("https://github.com/slapperwan/gh4a/releases/tag/tagName");
-        ReleaseLoadTask loadTask = assertThatLoadTaskIs(result.loadTask, ReleaseLoadTask.class);
-        assertThat("User name is incorrect", loadTask.mRepoOwner, is("slapperwan"));
-        assertThat("Repo name is incorrect", loadTask.mRepoName, is("gh4a"));
-        assertThat("Tag name is incorrect", loadTask.mTagName, is("tagName"));
+        assertRedirectsTo(result, ReleaseInfoActivity.class);
+        Bundle extras = result.intent.getExtras();
+        assertThat("Extras are missing", extras, is(notNullValue()));
+        assertThat("User name is incorrect", extras.getString("owner"), is("slapperwan"));
+        assertThat("Repo name is incorrect", extras.getString("repo"), is("gh4a"));
+        assertThat("Tag name is incorrect", extras.getString("tag"), is("tagName"));
     }
 
     @Test
-    public void issuesLink__opensIssueListActivity() throws Exception {
+    public void issuesLink__opensIssueListActivity() {
         LinkParser.ParseResult result = parseLink("https://github.com/slapperwan/gh4a/issues");
         assertRedirectsTo(result, IssueListActivity.class);
         Bundle extras = result.intent.getExtras();
@@ -236,7 +313,7 @@ public class LinkParserTest {
     }
 
     @Test
-    public void newIssueLink__opensIssueEditActivity() throws Exception {
+    public void newIssueLink__opensIssueEditActivity() {
         LinkParser.ParseResult result = parseLink("https://github.com/slapperwan/gh4a/issues/new");
         assertRedirectsTo(result, IssueEditActivity.class);
         Bundle extras = result.intent.getExtras();
@@ -247,7 +324,7 @@ public class LinkParserTest {
     }
 
     @Test
-    public void issueLink__opensIssueActivity() throws Exception {
+    public void issueLink__opensIssueActivity() {
         LinkParser.ParseResult result = parseLink("https://github.com/slapperwan/gh4a/issues/42");
         assertRedirectsTo(result, IssueActivity.class);
         Bundle extras = result.intent.getExtras();
@@ -259,14 +336,14 @@ public class LinkParserTest {
     }
 
     @Test
-    public void issueLink_withIncorrectNumber__opensBrowser() throws Exception {
+    public void issueLink_withIncorrectNumber__opensBrowser() {
         LinkParser.ParseResult result = parseLink("https://github.com/slapperwan/gh4a/issues/34no");
         assertRedirectsToBrowser(result);
     }
 
     @Test
     public void issueLink_withCommentMarker__opensIssueActivity_andHasCommentMarker()
-            throws Exception {
+            {
         LinkParser.ParseResult result =
                 parseLink("https://github.com/slapperwan/gh4a/issues/42#issuecomment-1234");
         assertRedirectsTo(result, IssueActivity.class);
@@ -281,7 +358,7 @@ public class LinkParserTest {
     }
 
     @Test
-    public void issueLink_withIncorrectCommentMarker_opensIssueActivity() throws Exception {
+    public void issueLink_withIncorrectCommentMarker_opensIssueActivity() {
         LinkParser.ParseResult result =
                 parseLink("https://github.com/slapperwan/gh4a/issues/42#issuecomment-A3");
         assertRedirectsTo(result, IssueActivity.class);
@@ -294,7 +371,7 @@ public class LinkParserTest {
     }
 
     @Test
-    public void pullRequestsLink__opensIssueListActivity() throws Exception {
+    public void pullRequestsLink__opensIssueListActivity() {
         LinkParser.ParseResult result = parseLink("https://github.com/slapperwan/gh4a/pulls");
         assertRedirectsTo(result, IssueListActivity.class);
         Bundle extras = result.intent.getExtras();
@@ -306,7 +383,7 @@ public class LinkParserTest {
     }
 
     @Test
-    public void wikiLink__opensWikiListActivity() throws Exception {
+    public void wikiLink__opensWikiListActivity() {
         LinkParser.ParseResult result = parseLink("https://github.com/slapperwan/gh4a/wiki");
         assertRedirectsTo(result, WikiListActivity.class);
         Bundle extras = result.intent.getExtras();
@@ -317,19 +394,25 @@ public class LinkParserTest {
     }
 
     @Test
-    public void pullRequestLink_withoutId__opensBrowser() throws Exception {
+    public void wikiLink_toSpecificPage__opensBrowser() {
+        LinkParser.ParseResult result = parseLink("https://github.com/slapperwan/gh4a/wiki/Information-hierarchy");
+        assertRedirectsToBrowser(result);
+    }
+
+    @Test
+    public void pullRequestLink_withoutId__opensBrowser() {
         assertRedirectsToBrowser(parseLink("https://github.com/slapperwan/gh4a/pull"));
     }
 
     @Test
-    public void pullRequestLink_withInvalidId__opensBrowser() throws Exception {
+    public void pullRequestLink_withInvalidId__opensBrowser() {
         assertRedirectsToBrowser(parseLink("https://github.com/slapperwan/gh4a/pull/-1"));
         assertRedirectsToBrowser(parseLink("https://github.com/slapperwan/gh4a/pull/fwbi"));
         assertRedirectsToBrowser(parseLink("https://github.com/slapperwan/gh4a/pull/0"));
     }
 
     @Test
-    public void pullRequestLink__opensPullRequestActivity() throws Exception {
+    public void pullRequestLink__opensPullRequestActivity() {
         LinkParser.ParseResult result = parseLink("https://github.com/slapperwan/gh4a/pull/12");
         assertRedirectsTo(result, PullRequestActivity.class);
         Bundle extras = result.intent.getExtras();
@@ -343,8 +426,7 @@ public class LinkParserTest {
     }
 
     @Test
-    public void pullRequestLink_withCommentMarker__opensPullRequestActivity_andHasCommentMarker()
-            throws Exception {
+    public void pullRequestLink_withCommentMarker__opensPullRequestActivity_andHasCommentMarker() {
         LinkParser.ParseResult result =
                 parseLink("https://github.com/slapperwan/gh4a/pull/14#issuecomment-7546");
         assertRedirectsTo(result, PullRequestActivity.class);
@@ -360,7 +442,7 @@ public class LinkParserTest {
     }
 
     @Test
-    public void pullRequestLink_withCommitsPage__opensPullRequestCommits() throws Exception {
+    public void pullRequestLink_withCommitsPage__opensPullRequestCommits() {
         LinkParser.ParseResult result =
                 parseLink("https://github.com/slapperwan/gh4a/pull/23/commits");
         assertRedirectsTo(result, PullRequestActivity.class);
@@ -376,7 +458,7 @@ public class LinkParserTest {
     }
 
     @Test
-    public void pullRequestLink_withFilesPage__opensPullRequestFiles() throws Exception {
+    public void pullRequestLink_withFilesPage__opensPullRequestFiles() {
         LinkParser.ParseResult result =
                 parseLink("https://github.com/slapperwan/gh4a/pull/23/files");
         assertRedirectsTo(result, PullRequestActivity.class);
@@ -392,7 +474,7 @@ public class LinkParserTest {
     }
 
     @Test
-    public void pullRequestLink_withUnknownPage__opensPullRequest() throws Exception {
+    public void pullRequestLink_withUnknownPage__opensPullRequest() {
         LinkParser.ParseResult result =
                 parseLink("https://github.com/slapperwan/gh4a/pull/23/unknown");
         assertRedirectsTo(result, PullRequestActivity.class);
@@ -407,10 +489,10 @@ public class LinkParserTest {
     }
 
     @Test
-    public void pullRequestLink_withDiffMarker__loadsDiff() throws Exception {
+    public void pullRequestLink_withDiffMarker__loadsDiff() {
         LinkParser.ParseResult result =
                 parseLink("https://github.com/slapperwan/gh4a/pull/665/files" +
-                        "#diff-38f43208e0c158ca7b78e175b8846bc6");
+                        "#diff-67060ff8c94bbee9421c7bcbed9c9ac8f69d93c26ffc59b26f15fb31982023a0");
         PullRequestDiffLoadTask loadTask =
                 assertThatLoadTaskIs(result.loadTask, PullRequestDiffLoadTask.class);
         assertThat("User name is incorrect", loadTask.mRepoOwner, is("slapperwan"));
@@ -418,17 +500,17 @@ public class LinkParserTest {
         DiffHighlightId diffId = loadTask.mDiffId;
         assertThat("Diff id is missing", diffId, is(notNullValue()));
         assertThat("File hash is incorrect", diffId.fileHash,
-                is("38f43208e0c158ca7b78e175b8846bc6"));
+                is("67060ff8c94bbee9421c7bcbed9c9ac8f69d93c26ffc59b26f15fb31982023a0"));
         assertThat("Start line is set", diffId.startLine, is(-1));
         assertThat("End line is set", diffId.endLine, is(-1));
         assertThat("Is right line", diffId.right, is(false));
     }
 
     @Test
-    public void pullRequestLink_withDiffMarker_andLeftNumber__loadsDiff() throws Exception {
+    public void pullRequestLink_withDiffMarker_andLeftNumber__loadsDiff() {
         LinkParser.ParseResult result =
                 parseLink("https://github.com/slapperwan/gh4a/pull/665/files" +
-                        "#diff-38f43208e0c158ca7b78e175b8846bc6L24");
+                        "#diff-67060ff8c94bbee9421c7bcbed9c9ac8f69d93c26ffc59b26f15fb31982023a0L24");
         PullRequestDiffLoadTask loadTask =
                 assertThatLoadTaskIs(result.loadTask, PullRequestDiffLoadTask.class);
         assertThat("User name is incorrect", loadTask.mRepoOwner, is("slapperwan"));
@@ -436,17 +518,17 @@ public class LinkParserTest {
         DiffHighlightId diffId = loadTask.mDiffId;
         assertThat("Diff id is missing", diffId, is(notNullValue()));
         assertThat("File hash is incorrect", diffId.fileHash,
-                is("38f43208e0c158ca7b78e175b8846bc6"));
+                is("67060ff8c94bbee9421c7bcbed9c9ac8f69d93c26ffc59b26f15fb31982023a0"));
         assertThat("Start line is incorrect", diffId.startLine, is(24));
         assertThat("End line is incorrect", diffId.endLine, is(24));
         assertThat("Is right line", diffId.right, is(false));
     }
 
     @Test
-    public void pullRequestLink_withDiffMarker_andLineRange__loadsDiff() throws Exception {
+    public void pullRequestLink_withDiffMarker_andLineRange__loadsDiff() {
         LinkParser.ParseResult result =
                 parseLink("https://github.com/slapperwan/gh4a/pull/665/files" +
-                        "#diff-38f43208e0c158ca7b78e175b8846bc6L24-L26");
+                        "#diff-67060ff8c94bbee9421c7bcbed9c9ac8f69d93c26ffc59b26f15fb31982023a0L24-L26");
         PullRequestDiffLoadTask loadTask =
                 assertThatLoadTaskIs(result.loadTask, PullRequestDiffLoadTask.class);
         assertThat("User name is incorrect", loadTask.mRepoOwner, is("slapperwan"));
@@ -454,18 +536,17 @@ public class LinkParserTest {
         DiffHighlightId diffId = loadTask.mDiffId;
         assertThat("Diff id is missing", diffId, is(notNullValue()));
         assertThat("File hash is incorrect", diffId.fileHash,
-                is("38f43208e0c158ca7b78e175b8846bc6"));
+                is("67060ff8c94bbee9421c7bcbed9c9ac8f69d93c26ffc59b26f15fb31982023a0"));
         assertThat("Start line is incorrect", diffId.startLine, is(24));
         assertThat("End line is incorrect", diffId.endLine, is(26));
         assertThat("Is right line", diffId.right, is(false));
     }
 
     @Test
-    public void pullRequestLink_withDiffMarker_andInvalidNumber__opensPullRequest() throws
-            Exception {
+    public void pullRequestLink_withDiffMarker_andInvalidNumber__opensPullRequest() {
         LinkParser.ParseResult result =
                 parseLink("https://github.com/slapperwan/gh4a/pull/665/files" +
-                        "#diff-38f43208e0c158ca7b78e175b8846bc6LA3");
+                        "#diff-67060ff8c94bbee9421c7bcbed9c9ac8f69d93c26ffc59b26f15fb31982023a0LA3");
         assertRedirectsTo(result, PullRequestActivity.class);
         Bundle extras = result.intent.getExtras();
         assertThat("Extras are missing", extras, is(notNullValue()));
@@ -479,10 +560,10 @@ public class LinkParserTest {
     }
 
     @Test
-    public void pullRequestLink_withDiffMarker_andRightNumber__loadsDiff() throws Exception {
+    public void pullRequestLink_withDiffMarker_andRightNumber__loadsDiff() {
         LinkParser.ParseResult result =
                 parseLink("https://github.com/slapperwan/gh4a/pull/665/files" +
-                        "#diff-38f43208e0c158ca7b78e175b8846bc6R24");
+                        "#diff-67060ff8c94bbee9421c7bcbed9c9ac8f69d93c26ffc59b26f15fb31982023a0R24");
         PullRequestDiffLoadTask loadTask =
                 assertThatLoadTaskIs(result.loadTask, PullRequestDiffLoadTask.class);
         assertThat("User name is incorrect", loadTask.mRepoOwner, is("slapperwan"));
@@ -490,31 +571,14 @@ public class LinkParserTest {
         DiffHighlightId diffId = loadTask.mDiffId;
         assertThat("Diff id is missing", diffId, is(notNullValue()));
         assertThat("File hash is incorrect", diffId.fileHash,
-                is("38f43208e0c158ca7b78e175b8846bc6"));
+                is("67060ff8c94bbee9421c7bcbed9c9ac8f69d93c26ffc59b26f15fb31982023a0"));
         assertThat("Start line is incorrect", diffId.startLine, is(24));
         assertThat("End line is incorrect", diffId.endLine, is(24));
         assertThat("Is not right line", diffId.right, is(true));
     }
 
     @Test
-    public void pullRequestLink_withDiffMarker_andIncorrectHash__loadsDiff() throws Exception {
-        LinkParser.ParseResult result =
-                parseLink("https://github.com/slapperwan/gh4a/pull/665/files" +
-                        "#diff-38f43208e0c158ca7b78e1");
-        assertRedirectsTo(result, PullRequestActivity.class);
-        Bundle extras = result.intent.getExtras();
-        assertThat("Extras are missing", extras, is(notNullValue()));
-        assertThat("User name is incorrect", extras.getString("owner"), is("slapperwan"));
-        assertThat("Repo name is incorrect", extras.getString("repo"), is("gh4a"));
-        assertThat("Pull request number is incorrect", extras.getInt("number"), is(665));
-        assertThat("Initial page is incorrect", extras.getInt("initial_page"),
-                is(PullRequestActivity.PAGE_FILES));
-        assertThat("Comment marker is set", extras.getParcelable("initial_comment"),
-                is(nullValue()));
-    }
-
-    @Test
-    public void pullRequestReviewLink__loadsReview() throws Exception {
+    public void pullRequestReviewLink__loadsReview() {
         LinkParser.ParseResult result =
                 parseLink("https://github.com/slapperwan/gh4a/pull/665#pullrequestreview-59822171");
         PullRequestReviewLoadTask loadTask =
@@ -527,7 +591,7 @@ public class LinkParserTest {
     }
 
     @Test
-    public void pullRequestReviewCommentLink__loadsReviewComment() throws Exception {
+    public void pullRequestReviewCommentLink__loadsReviewComment() {
         LinkParser.ParseResult result =
                 parseLink("https://github.com/slapperwan/gh4a/pull/665#discussion_r136306029");
         PullRequestReviewCommentLoadTask loadTask =
@@ -540,7 +604,7 @@ public class LinkParserTest {
     }
 
     @Test
-    public void pullRequestReviewDiffLink__loadsReviewDiff() throws Exception {
+    public void pullRequestReviewDiffLink__loadsReviewDiff() {
         LinkParser.ParseResult result = parseLink("https://github.com/slapperwan/gh4a/pull/665" +
                 "#discussion-diff-136304421R590");
         PullRequestReviewDiffLoadTask loadTask =
@@ -556,7 +620,7 @@ public class LinkParserTest {
     }
 
     @Test
-    public void pullRequestDiffCommentLink__loadsReviewDiff() throws Exception {
+    public void pullRequestDiffCommentLink__loadsReviewDiff() {
         LinkParser.ParseResult result =
                 parseLink("https://github.com/slapperwan/gh4a/pull/665/files#r136306029");
         PullRequestDiffCommentLoadTask loadTask =
@@ -570,7 +634,7 @@ public class LinkParserTest {
     }
 
     @Test
-    public void commitLink__opensCommitActivity() throws Exception {
+    public void commitLink__opensCommitActivity() {
         LinkParser.ParseResult result =
                 parseLink("https://github.com/slapperwan/gh4a/commit/commitSha");
         assertRedirectsTo(result, CommitActivity.class);
@@ -585,12 +649,27 @@ public class LinkParserTest {
     }
 
     @Test
-    public void commitLink_withoutCommitSha__opensBrowser() throws Exception {
+    public void commitLink_withoutCommitSha__opensBrowser() {
         assertRedirectsToBrowser(parseLink("https://github.com/slapperwan/gh4a/commit"));
     }
 
     @Test
-    public void commitLink_withDiffMarker__loadsCommitDiff() throws Exception {
+    public void commitLink_withCommentMarker__opensCommitActivity() {
+        LinkParser.ParseResult result =
+                parseLink("https://github.com/slapperwan/gh4a/commit/commitSha#commitcomment-155241730");
+        assertRedirectsTo(result, CommitActivity.class);
+        Bundle extras = result.intent.getExtras();
+        assertThat("Extras are missing", extras, is(notNullValue()));
+        assertThat("User name is incorrect", extras.getString("owner"), is("slapperwan"));
+        assertThat("Repo name is incorrect", extras.getString("repo"), is("gh4a"));
+        assertThat("Commit sha is incorrect", extras.getString("sha"), is("commitSha"));
+        IntentUtils.InitialCommentMarker commentMarker = extras.getParcelable("initial_comment");
+        assertThat("Comment marker is missing", commentMarker, is(notNullValue()));
+        assertThat("Comment id is incorrect", commentMarker.commentId, is(155241730L));
+    }
+
+    @Test
+    public void commitLink_withDiffMarker__loadsCommitDiff() {
         LinkParser.ParseResult result =
                 parseLink("https://github.com/slapperwan/gh4a/commit/" +
                         "57a054f85ade77ebb80eecd671aace770b312bf5" +
@@ -611,9 +690,9 @@ public class LinkParserTest {
     }
 
     @Test
-    public void commitLink_withCommentMarker__opensCommitActivity() throws Exception {
+    public void commitLink_withDiffCommentMarker__loadsCommitDiff() {
         LinkParser.ParseResult result =
-                parseLink("https://github.com/slapperwan/gh4a/commit/commitSha#commitcomment-12");
+                parseLink("https://github.com/slapperwan/gh4a/commit/commitSha#r24675412");
         CommitCommentLoadTask loadTask =
                 assertThatLoadTaskIs(result.loadTask, CommitCommentLoadTask.class);
         assertThat("User name is incorrect", loadTask.mRepoOwner, is("slapperwan"));
@@ -621,17 +700,17 @@ public class LinkParserTest {
         assertThat("Commit sha is incorrect", loadTask.mCommitSha, is("commitSha"));
         IntentUtils.InitialCommentMarker commentMarker = loadTask.mMarker;
         assertThat("Comment marker is missing", commentMarker, is(notNullValue()));
-        assertThat("Comment id is incorrect", commentMarker.commentId, is(12L));
+        assertThat("Comment id is incorrect", commentMarker.commentId, is(24675412L));
     }
 
     @Test
-    public void commitsLink__handlesRefAndPath_andRedirectsToCommitsPage() throws Exception {
+    public void commitsLink__handlesRefAndPath_andRedirectsToCommitsPage() {
         LinkParser.ParseResult result = parseLink("https://github.com/slapperwan/gh4a/commits");
         RefPathDisambiguationTask loadTask =
                 assertThatLoadTaskIs(result.loadTask, RefPathDisambiguationTask.class);
         assertThat("User name is incorrect", loadTask.mRepoOwner, is("slapperwan"));
         assertThat("Repo name is incorrect", loadTask.mRepoName, is("gh4a"));
-        assertThat("Ref and path is not empty", loadTask.mRefAndPath, isEmptyString());
+        assertThat("Ref and path is not empty", loadTask.mRefAndPath, is(equalTo("")));
         assertThat("Page does not lead to commits", loadTask.mInitialPage,
                 is(RepositoryActivity.PAGE_COMMITS));
         assertThat("Fragment is set", loadTask.mFragment, is(nullValue()));
@@ -639,8 +718,7 @@ public class LinkParserTest {
     }
 
     @Test
-    public void commitsLink_withBranch__handlesRefAndPath_andRedirectsToCommitsPage()
-            throws Exception {
+    public void commitsLink_withBranch__handlesRefAndPath_andRedirectsToCommitsPage() {
         LinkParser.ParseResult result =
                 parseLink("https://github.com/slapperwan/gh4a/commits/master");
         RefPathDisambiguationTask loadTask =
@@ -655,8 +733,7 @@ public class LinkParserTest {
     }
 
     @Test
-    public void commitsLink_withRefsHeads__handlesRefAndPath_andRedirectsToCommitsPage()
-            throws Exception {
+    public void commitsLink_withRefsHeads__handlesRefAndPath_andRedirectsToCommitsPage() {
         LinkParser.ParseResult result =
                 parseLink("https://github.com/slapperwan/gh4a/commits/refs/heads/master");
         RefPathDisambiguationTask loadTask =
@@ -671,13 +748,13 @@ public class LinkParserTest {
     }
 
     @Test
-    public void treeLink__handlesRefAndPath_andRedirectsToFilesPage() throws Exception {
+    public void treeLink__handlesRefAndPath_andRedirectsToFilesPage() {
         LinkParser.ParseResult result = parseLink("https://github.com/slapperwan/gh4a/tree");
         RefPathDisambiguationTask loadTask =
                 assertThatLoadTaskIs(result.loadTask, RefPathDisambiguationTask.class);
         assertThat("User name is incorrect", loadTask.mRepoOwner, is("slapperwan"));
         assertThat("Repo name is incorrect", loadTask.mRepoName, is("gh4a"));
-        assertThat("Ref and path is not empty", loadTask.mRefAndPath, isEmptyString());
+        assertThat("Ref and path is not empty", loadTask.mRefAndPath, is(equalTo("")));
         assertThat("Page does not lead to files", loadTask.mInitialPage,
                 is(RepositoryActivity.PAGE_FILES));
         assertThat("Fragment is set", loadTask.mFragment, is(nullValue()));
@@ -685,7 +762,7 @@ public class LinkParserTest {
     }
 
     @Test
-    public void treeLink_withBranch__handlesRefAndPath_andRedirectsToFilesPage() throws Exception {
+    public void treeLink_withBranch__handlesRefAndPath_andRedirectsToFilesPage() {
         LinkParser.ParseResult result = parseLink("https://github.com/slapperwan/gh4a/tree/master");
         RefPathDisambiguationTask loadTask =
                 assertThatLoadTaskIs(result.loadTask, RefPathDisambiguationTask.class);
@@ -699,8 +776,7 @@ public class LinkParserTest {
     }
 
     @Test
-    public void treeLink_withRefsHeads__handlesRefAndPath_andRedirectsToFilesPage()
-            throws Exception {
+    public void treeLink_withRefsHeads__handlesRefAndPath_andRedirectsToFilesPage() {
         LinkParser.ParseResult result =
                 parseLink("https://github.com/slapperwan/gh4a/tree/refs/heads/master");
         RefPathDisambiguationTask loadTask =
@@ -715,7 +791,7 @@ public class LinkParserTest {
     }
 
     @Test
-    public void blobLink__handlesRefAndPath_andRedirectsToFileViewer() throws Exception {
+    public void blobLink__handlesRefAndPath_andRedirectsToFileViewer() {
         LinkParser.ParseResult result =
                 parseLink("https://github.com/slapperwan/gh4a/blob/master/README.md");
         RefPathDisambiguationTask loadTask =
@@ -729,8 +805,7 @@ public class LinkParserTest {
     }
 
     @Test
-    public void blobLink_withLineMarker__handlesRefAndPath_andRedirectsToFileViewer()
-            throws Exception {
+    public void blobLink_withLineMarker__handlesRefAndPath_andRedirectsToFileViewer() {
         LinkParser.ParseResult result =
                 parseLink("https://github.com/slapperwan/gh4a/blob/master/build.gradle#L10");
         RefPathDisambiguationTask loadTask =
@@ -744,17 +819,12 @@ public class LinkParserTest {
     }
 
     @Test
-    public void blobLink_withoutBranchAndPath__opensBrowser() throws Exception {
+    public void blobLink_withoutBranchAndPath__opensBrowser() {
         assertRedirectsToBrowser(parseLink("https://github.com/slapperwan/gh4a/blob"));
     }
 
     @Test
-    public void compareLink__redirectsToCompareView() throws Exception {
-
-    }
-
-    @Test
-    public void compareLink_withoutRefs__opensBrowser() throws Exception {
+    public void compareLink_withoutRefs__opensBrowser() {
         LinkParser.ParseResult result =
                 (parseLink("https://github.com/slapperwan/gh4a/compare/v4.2.0...v4.2.1"));
         assertRedirectsTo(result, CompareActivity.class);
@@ -768,13 +838,18 @@ public class LinkParserTest {
     }
 
     @Test
-    public void compareLink_withIncompleteRefs__opensBrowser() throws Exception {
+    public void compareLink_withIncompleteRefs__opensBrowser() {
         assertRedirectsToBrowser(parseLink("https://github.com/slapperwan/gh4a/compare/v4.2.0..."));
     }
 
     @Test
-    public void unknownRepositoryLink__opensBrowser() throws Exception {
+    public void unknownRepositoryLink__opensBrowser() {
         assertRedirectsToBrowser(parseLink("https://github.com/slapperwan/gh4a/unknown"));
+    }
+
+    @Test
+    public void nonGitHubDotComLink__opensBrowser() {
+        assertRedirectsToBrowser(parseLink("https://user-images.githubusercontent.com/30041551/an_image.png"));
     }
 
     private LinkParser.ParseResult parseLink(String uriString) {

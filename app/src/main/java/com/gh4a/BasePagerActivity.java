@@ -1,9 +1,7 @@
 package com.gh4a;
 
-import android.annotation.TargetApi;
 import android.content.res.Configuration;
 import android.graphics.Color;
-import android.os.Build;
 import android.os.Bundle;
 import com.google.android.material.tabs.TabLayout;
 import androidx.viewpager.widget.PagerAdapter;
@@ -36,7 +34,7 @@ public abstract class BasePagerActivity extends BaseActivity implements
         setContentView(R.layout.view_pager);
         mPager = setupPager();
 
-        mCurrentHeaderColor = UiUtils.resolveColor(this, R.attr.colorPrimary);
+        mCurrentHeaderColor = UiUtils.resolveColor(this, androidx.appcompat.R.attr.colorPrimary);
         updateTabHeaderColors();
         updateTabVisibility();
     }
@@ -71,7 +69,7 @@ public abstract class BasePagerActivity extends BaseActivity implements
             if (colorAttrs != null) {
                 transitionHeaderToColor(colorAttrs[0], colorAttrs[1]);
             } else {
-                transitionHeaderToColor(R.attr.colorPrimary, R.attr.colorPrimaryDark);
+                transitionHeaderToColor(androidx.appcompat.R.attr.colorPrimary, androidx.appcompat.R.attr.colorPrimaryDark);
             }
         }
         tryUpdatePagerColor();
@@ -211,18 +209,15 @@ public abstract class BasePagerActivity extends BaseActivity implements
     }
 
     private void tryUpdatePagerColor() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            ViewPagerEdgeColorHelper helper =
-                    (ViewPagerEdgeColorHelper) mPager.getTag(R.id.EdgeColorHelper);
-            if (helper == null) {
-                helper = new ViewPagerEdgeColorHelper(mPager);
-                mPager.setTag(R.id.EdgeColorHelper, helper);
-            }
-            helper.setColor(mCurrentHeaderColor);
+        ViewPagerEdgeColorHelper helper =
+                (ViewPagerEdgeColorHelper) mPager.getTag(R.id.EdgeColorHelper);
+        if (helper == null) {
+            helper = new ViewPagerEdgeColorHelper(mPager);
+            mPager.setTag(R.id.EdgeColorHelper, helper);
         }
+        helper.setColor(mCurrentHeaderColor);
     }
 
-    @TargetApi(21)
     private static class ViewPagerEdgeColorHelper {
         private final ViewPager mPager;
         private int mColor;

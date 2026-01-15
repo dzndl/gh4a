@@ -20,12 +20,12 @@ import com.gh4a.R;
 import com.gh4a.activities.ReviewActivity;
 import com.gh4a.activities.UserActivity;
 import com.gh4a.model.TimelineItem;
+import com.gh4a.utils.ApiHelpers;
 import com.gh4a.utils.AvatarHandler;
 import com.gh4a.utils.HttpImageGetter;
 import com.gh4a.utils.IntentUtils;
 import com.gh4a.utils.StringUtils;
 import com.gh4a.utils.UiUtils;
-import com.gh4a.widget.StyleableTextView;
 import com.gh4a.widget.TimestampToastSpan;
 
 import com.meisolsson.githubsdk.model.Review;
@@ -48,7 +48,7 @@ class ReviewViewHolder
     private final Callback mCallback;
 
     private final ImageView mAvatarView;
-    private final StyleableTextView mMessageView;
+    private final TextView mMessageView;
     private final TextView mBodyView;
     private final Button mShowDetailsButton;
     private final View mAvatarContainer;
@@ -115,14 +115,7 @@ class ReviewViewHolder
         mAvatarContainer.setTag(review.user());
 
         formatTitle(review);
-
-        boolean hasBody = !TextUtils.isEmpty(review.body());
-        if (hasBody) {
-            mImageGetter.bind(mBodyView, review.bodyHtml(), review.id());
-            mBodyView.setVisibility(View.VISIBLE);
-        } else {
-            mBodyView.setVisibility(View.GONE);
-        }
+        mImageGetter.bind(mBodyView, review.bodyHtml(), review.id());
 
         if (mCallback.canQuote()) {
             mBodyView.setCustomSelectionActionModeCallback(mQuoteActionModeCallback);
@@ -195,6 +188,7 @@ class ReviewViewHolder
             mDetailsHeader.setVisibility(View.GONE);
         }
 
+        boolean hasBody = !TextUtils.isEmpty(review.body());
         if (hasBody && mDisplayReviewDetails && hasDiffs) {
             mDetailsDivider.setVisibility(View.VISIBLE);
         } else {
@@ -212,7 +206,7 @@ class ReviewViewHolder
         switch (review.state()) {
             case Approved: return R.drawable.timeline_event_approved;
             case ChangesRequested: return R.drawable.timeline_event_requested_changes;
-            default: return R.drawable.timeline_event_reviewed;
+            default: return R.drawable.timeline_event_review;
         }
     }
 
@@ -226,6 +220,8 @@ class ReviewViewHolder
                 textResId = R.string.pull_request_event_review_requested_changes;
                 break;
             case Dismissed:
+                textResId = R.string.pull_request_event_review_previously_reviewed;
+                break;
             case Commented:
             default:
                 textResId = R.string.pull_request_event_review_reviewed;
@@ -235,10 +231,9 @@ class ReviewViewHolder
                 break;
         }
 
-        String login = review.user().login();
+        String login = ApiHelpers.getUserLogin(mContext, review.user());
         String textBase = mContext.getString(textResId, login);
-        SpannableStringBuilder text = StringUtils.applyBoldTags(textBase,
-                mMessageView.getTypefaceValue());
+        SpannableStringBuilder text = StringUtils.applyBoldTags(textBase);
 
         CharSequence time = review.submittedAt() != null
                 ? StringUtils.formatRelativeTime(mContext, review.submittedAt(), true) : "";

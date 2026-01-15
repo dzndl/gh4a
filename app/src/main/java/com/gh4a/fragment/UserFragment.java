@@ -18,6 +18,8 @@ package com.gh4a.fragment;
 import android.content.Intent;
 import android.os.Bundle;
 import androidx.annotation.PluralsRes;
+import androidx.core.content.ContextCompat;
+
 import android.text.format.DateFormat;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -48,6 +50,7 @@ import com.meisolsson.githubsdk.service.organizations.OrganizationMemberService;
 import com.meisolsson.githubsdk.service.organizations.OrganizationService;
 import com.meisolsson.githubsdk.service.repositories.RepositoryService;
 import com.meisolsson.githubsdk.service.users.UserFollowerService;
+import com.vdurmont.emoji.EmojiParser;
 
 import java.util.Collection;
 import java.util.HashMap;
@@ -104,8 +107,8 @@ public class UserFragment extends LoadingFragmentBase implements
     }
 
     @Override
-    public void onActivityCreated(Bundle savedInstanceState) {
-        super.onActivityCreated(savedInstanceState);
+    public void onViewCreated(View view, Bundle savedInstanceState) {
+        super.onViewCreated(view, savedInstanceState);
 
         fillData();
         loadTopRepositories(false);
@@ -146,7 +149,7 @@ public class UserFragment extends LoadingFragmentBase implements
 
         mFollowersRow.setVisibility(isUser ? View.VISIBLE : View.GONE);
         followingRow.setVisibility(isUser ? View.VISIBLE : View.GONE);
-        membersRow.setVisibility(isUser ? View.GONE : View.VISIBLE);
+        membersRow.setVisibility(mUser.type() == UserType.Organization ? View.VISIBLE : View.GONE);
 
         if (isUser) {
             mFollowersRow.setIconClickListener(canFollowUser() ? this : null);
@@ -175,18 +178,35 @@ public class UserFragment extends LoadingFragmentBase implements
         reposRow.setText(getResources().getQuantityString(R.plurals.repository, repoCount, repoCount));
         reposRow.setClickIntent(RepositoryListActivity.makeIntent(getActivity(), mUser.login(), !isUser));
 
+        OverviewRow typeRow = mContentView.findViewById(R.id.type_row);
+        switch (mUser.type()) {
+            case User:
+                typeRow.setVisibility(View.GONE);
+                break;
+            case Organization:
+                typeRow.setText(getString(R.string.user_type_org));
+                typeRow.setIcon(ContextCompat.getDrawable(getActivity(), R.drawable.icon_user_org));
+                typeRow.setVisibility(View.VISIBLE);
+                break;
+            case Bot:
+                typeRow.setText(getString(R.string.user_type_bot));
+                typeRow.setIcon(ContextCompat.getDrawable(getActivity(), R.drawable.icon_user_bot));
+                typeRow.setVisibility(View.VISIBLE);
+                break;
+        }
+
         TextView tvName = mContentView.findViewById(R.id.tv_name);
-        String name = StringUtils.isBlank(mUser.name()) ? mUser.login() : mUser.name();
-        if (mUser.type() == UserType.Organization) {
-            tvName.setText(getString(R.string.org_user_template, name));
+        if (StringUtils.isBlank(mUser.name())) {
+            tvName.setText(ApiHelpers.getUserLogin(getActivity(), mUser));
         } else {
-            tvName.setText(name);
+            tvName.setText(mUser.name());
         }
 
         fillTextView(R.id.tv_email, mUser.email());
         fillTextView(R.id.tv_website, mUser.blog());
         fillTextView(R.id.tv_company, mUser.company());
         fillTextView(R.id.tv_location, mUser.location());
+        fillTextView(R.id.tv_bio, mUser.bio() != null ? EmojiParser.parseToUnicode(mUser.bio()) : null);
     }
 
     private static int orZero(Integer count) {
@@ -250,12 +270,12 @@ public class UserFragment extends LoadingFragmentBase implements
                 rowView.setTag(repo);
 
                 TextView tvTitle = rowView.findViewById(R.id.tv_title);
-                tvTitle.setText(repo.owner().login() + "/" + repo.name());
+                tvTitle.setText(ApiHelpers.formatRepoName(getActivity(), repo));
 
                 TextView tvDesc = rowView.findViewById(R.id.tv_desc);
                 if (!StringUtils.isBlank(repo.description())) {
                     tvDesc.setVisibility(View.VISIBLE);
-                    tvDesc.setText(repo.description());
+                    tvDesc.setText(EmojiParser.parseToUnicode(repo.description()));
                 } else {
                     tvDesc.setVisibility(View.GONE);
                 }
@@ -332,7 +352,7 @@ public class UserFragment extends LoadingFragmentBase implements
     }
 
     private void loadTopRepositories(boolean force) {
-        RepositoryService service = ServiceFactory.get(RepositoryService.class, force, null, null, 5);
+        RepositoryService service = ServiceFactory.get(RepositoryService.class, force, 5);
         final Single<Response<Page<Repository>>> observable;
 
         Map<String, String> filterData = new HashMap<>();
@@ -363,7 +383,7 @@ public class UserFragment extends LoadingFragmentBase implements
             return;
         }
 
-        final OrganizationService service = ServiceFactory.get(OrganizationService.class, force);
+        var service = ServiceFactory.getForFullPagedLists(OrganizationService.class, force);
         ApiHelpers.PageIterator
                 .toSingle(page -> mIsSelf
                         ? service.getMyOrganizations(page)
@@ -377,11 +397,13 @@ public class UserFragment extends LoadingFragmentBase implements
         if (mUser.type() != UserType.Organization) {
             return;
         }
-        final OrganizationMemberService service =
-                ServiceFactory.get(OrganizationMemberService.class, force);
-        ApiHelpers.PageIterator
-                .toSingle(page -> service.getMembers(mUser.login(), page))
-                .map(memberList -> memberList.size())
+        final OrganizationMemberService service = ServiceFactory.get(OrganizationMemberService.class, force, 1);
+        service.getMembers(mUser.login(), 1)
+                .map(ApiHelpers::throwOnFailure)
+                .map(page -> {
+                    int pagesCount = ApiHelpers.getTotalPagesCount(page);
+                    return pagesCount == 1 ? page.items().size() : pagesCount;
+                })
                 .compose(makeLoaderSingle(ID_LOADER_ORG_MEMBER_COUNT, force))
                 .subscribe(count -> {
                     OverviewRow membersRow = mContentView.findViewById(R.id.members_row);

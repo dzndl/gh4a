@@ -31,7 +31,7 @@
                     android:background="?attr/selectableItemBackgroundBorderless"
                     tools:src="@drawable/default_avatar" />
 
-                <com.gh4a.widget.StyleableTextView
+                <com.gh4a.widget.LinkHandlingTextView
                     android:id="@+id/tv_releaseinfo"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
@@ -39,7 +39,7 @@
                     android:textAppearance="?android:attr/textAppearanceSmall"
                     tools:text="Released by username yesterday" />
 
-                <com.gh4a.widget.StyleableTextView
+                <com.gh4a.widget.LinkHandlingTextView
                     android:id="@+id/tv_releasetype"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
@@ -49,7 +49,7 @@
                     android:textAppearance="?android:attr/textAppearanceSmall"
                     tools:text="Release type" />
 
-                <com.gh4a.widget.StyleableTextView
+                <com.gh4a.widget.LinkHandlingTextView
                     android:id="@+id/tv_releasetag"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
@@ -75,29 +75,31 @@
                 android:layout_marginBottom="@dimen/overview_header_spacing"
                 android:orientation="vertical">
 
-                <com.gh4a.widget.StyleableTextView
+                <TextView
                     android:id="@+id/release_notes_title"
                     style="@style/HeaderLabel"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text="@string/release_notes" />
 
-                <ProgressBar
-                    android:id="@+id/pb_releasenotes"
-                    style="@style/LoadingProgress" />
-
-                <com.gh4a.widget.StyleableTextView
+                <com.gh4a.widget.LinkHandlingTextView
                     android:id="@+id/tv_release_notes"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:paddingBottom="@dimen/content_padding"
+                    android:paddingBottom="@dimen/overview_item_spacing"
                     android:paddingLeft="@dimen/content_padding"
                     android:paddingRight="@dimen/content_padding"
                     android:textIsSelectable="true"
-                    android:visibility="gone"
                     app:needsLinkHandling="true"
-                    tools:text="Release notes text"
-                    tools:visibility="visible" />
+                    tools:text="Release notes text" />
+
+                <com.gh4a.widget.ReactionBar
+                    android:id="@+id/reactions"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:paddingBottom="8dp"
+                    android:paddingLeft="@dimen/content_padding"
+                    android:paddingRight="@dimen/content_padding" />
 
             </LinearLayout>
 
@@ -114,7 +116,7 @@
                 android:layout_marginBottom="@dimen/overview_header_spacing"
                 android:orientation="vertical">
 
-                <com.gh4a.widget.StyleableTextView
+                <TextView
                     android:id="@+id/downloads_title"
                     style="@style/HeaderLabel"
                     android:layout_width="match_parent"

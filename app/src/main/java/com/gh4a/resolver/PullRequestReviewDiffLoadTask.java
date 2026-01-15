@@ -1,6 +1,8 @@
 package com.gh4a.resolver;
 
 import android.content.Intent;
+import android.net.Uri;
+
 import androidx.annotation.VisibleForTesting;
 import androidx.fragment.app.FragmentActivity;
 
@@ -8,10 +10,11 @@ import com.gh4a.ServiceFactory;
 import com.gh4a.activities.ReviewActivity;
 import com.gh4a.utils.ApiHelpers;
 import com.gh4a.utils.IntentUtils;
-import com.gh4a.utils.Optional;
 import com.gh4a.utils.RxUtils;
 import com.meisolsson.githubsdk.service.pull_request.PullRequestReviewCommentService;
 import com.meisolsson.githubsdk.service.pull_request.PullRequestReviewService;
+
+import java.util.Optional;
 
 import io.reactivex.Single;
 
@@ -25,9 +28,9 @@ public class PullRequestReviewDiffLoadTask extends UrlLoadTask {
     @VisibleForTesting
     protected final int mPullRequestNumber;
 
-    public PullRequestReviewDiffLoadTask(FragmentActivity activity, String repoOwner,
-            String repoName, DiffHighlightId diffId, int pullRequestNumber) {
-        super(activity);
+    public PullRequestReviewDiffLoadTask(FragmentActivity activity, Uri urlToResolve,
+            String repoOwner, String repoName, DiffHighlightId diffId, int pullRequestNumber) {
+        super(activity, urlToResolve);
         mRepoOwner = repoOwner;
         mRepoName = repoName;
         mDiffId = diffId;
@@ -36,17 +39,15 @@ public class PullRequestReviewDiffLoadTask extends UrlLoadTask {
 
     @Override
     protected Single<Optional<Intent>> getSingle() {
-        final PullRequestReviewCommentService service =
-                ServiceFactory.get(PullRequestReviewCommentService.class, false);
+        var service = ServiceFactory.getForFullPagedLists(PullRequestReviewCommentService.class, false);
         final PullRequestReviewService reviewService =
                 ServiceFactory.get(PullRequestReviewService.class, false);
         long diffCommentId = Long.parseLong(mDiffId.fileHash);
 
         return ApiHelpers.PageIterator
-                .toSingle(page -> service.getPullRequestComments(
-                        mRepoOwner, mRepoName, mPullRequestNumber, page))
-                .compose(RxUtils.filterAndMapToFirst(c -> c.id() == diffCommentId))
-                .flatMap(commentOpt -> commentOpt.flatMap(comment -> {
+                .first(page -> service.getPullRequestComments(mRepoOwner, mRepoName, mPullRequestNumber, page),
+                        c -> c.id() == diffCommentId)
+                .flatMap(commentOpt -> RxUtils.mapToSingle(commentOpt, comment -> {
                     long reviewId = comment.pullRequestReviewId();
                     return reviewService.getReview(mRepoOwner, mRepoName, mPullRequestNumber, reviewId)
                             .map(ApiHelpers::throwOnFailure);

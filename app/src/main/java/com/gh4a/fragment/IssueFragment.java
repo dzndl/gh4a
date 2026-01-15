@@ -17,13 +17,12 @@ import com.meisolsson.githubsdk.model.GitHubCommentBase;
 import com.meisolsson.githubsdk.model.Issue;
 import com.meisolsson.githubsdk.model.IssueState;
 import com.meisolsson.githubsdk.service.issues.IssueCommentService;
-import com.meisolsson.githubsdk.service.issues.IssueEventService;
+import com.meisolsson.githubsdk.service.issues.IssueTimelineService;
 
-import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 
 import io.reactivex.Single;
+import io.reactivex.schedulers.Schedulers;
 import retrofit2.Response;
 
 public class IssueFragment extends IssueFragmentBase {
@@ -73,25 +72,13 @@ public class IssueFragment extends IssueFragmentBase {
     @Override
     protected Single<List<TimelineItem>> onCreateDataSingle(boolean bypassCache) {
         final int issueNumber = mIssue.number();
-        final IssueEventService eventService = ServiceFactory.get(IssueEventService.class, bypassCache);
-        final IssueCommentService commentService =
-                ServiceFactory.get(IssueCommentService.class, bypassCache);
+        var timelineService = ServiceFactory.getForFullPagedLists(IssueTimelineService.class, bypassCache);
 
-        Single<List<TimelineItem>> commentSingle = ApiHelpers.PageIterator
-                .toSingle(page -> commentService.getIssueComments(mRepoOwner, mRepoName, issueNumber, page))
-                .compose(RxUtils.mapList(TimelineItem.TimelineComment::new));
-        Single<List<TimelineItem>> eventSingle = ApiHelpers.PageIterator
-                .toSingle(page -> eventService.getIssueEvents(mRepoOwner, mRepoName, issueNumber, page))
+        return ApiHelpers.PageIterator
+                .toSingle(page -> timelineService.getTimeline(mRepoOwner, mRepoName, issueNumber, page))
                 .compose(RxUtils.filter(event -> INTERESTING_EVENTS.contains(event.event())))
-                .compose((RxUtils.mapList(TimelineItem.TimelineEvent::new)));
-
-        return Single.zip(commentSingle, eventSingle, (comments, events) -> {
-            ArrayList<TimelineItem> result = new ArrayList<>();
-            result.addAll(comments);
-            result.addAll(events);
-            Collections.sort(result, TimelineItem.COMPARATOR);
-            return result;
-        });
+                .compose(RxUtils.mapList(TimelineItem::fromIssueEvent))
+                .subscribeOn(Schedulers.io());
     }
 
     @Override
@@ -100,7 +87,7 @@ public class IssueFragment extends IssueFragmentBase {
                 ? R.attr.colorIssueClosed : R.attr.colorIssueOpen;
         Intent intent = EditIssueCommentActivity.makeIntent(getActivity(), mRepoOwner, mRepoName,
                 mIssue.number(), comment.id(), comment.body(), highlightColorAttr);
-        startActivityForResult(intent, REQUEST_EDIT);
+        mEditLauncher.launch(intent);
     }
 
     @Override

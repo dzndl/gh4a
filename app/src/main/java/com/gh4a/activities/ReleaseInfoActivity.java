@@ -19,9 +19,6 @@ import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
-import androidx.annotation.Nullable;
-import androidx.recyclerview.widget.LinearLayoutManager;
-import androidx.recyclerview.widget.RecyclerView;
 import android.text.TextUtils;
 import android.view.Menu;
 import android.view.MenuItem;
@@ -30,31 +27,43 @@ import android.widget.ImageView;
 import android.widget.TextView;
 
 import com.gh4a.BaseActivity;
+import com.gh4a.Gh4Application;
 import com.gh4a.R;
 import com.gh4a.ServiceFactory;
 import com.gh4a.adapter.ReleaseAssetAdapter;
 import com.gh4a.adapter.RootAdapter;
 import com.gh4a.utils.ApiHelpers;
 import com.gh4a.utils.AvatarHandler;
+import com.gh4a.utils.DownloadUtils;
 import com.gh4a.utils.HttpImageGetter;
 import com.gh4a.utils.IntentUtils;
-import com.gh4a.utils.Optional;
+import com.gh4a.utils.RxUtils;
 import com.gh4a.utils.StringUtils;
 import com.gh4a.utils.UiUtils;
-import com.gh4a.widget.StyleableTextView;
+import com.gh4a.widget.ReactionBar;
 import com.gh4a.widget.SwipeRefreshLayout;
+import com.google.android.material.snackbar.Snackbar;
+import com.meisolsson.githubsdk.model.Reaction;
+import com.meisolsson.githubsdk.model.Reactions;
 import com.meisolsson.githubsdk.model.Release;
 import com.meisolsson.githubsdk.model.ReleaseAsset;
-import com.meisolsson.githubsdk.model.request.RequestMarkdown;
-import com.meisolsson.githubsdk.service.misc.MarkdownService;
+import com.meisolsson.githubsdk.model.request.ReactionRequest;
+import com.meisolsson.githubsdk.service.reactions.ReactionService;
 import com.meisolsson.githubsdk.service.repositories.RepositoryReleaseService;
 
+import java.util.Date;
+import java.util.List;
+
+import androidx.annotation.Nullable;
+import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
 import io.reactivex.Single;
-import io.reactivex.disposables.Disposable;
+import retrofit2.Response;
 
 public class ReleaseInfoActivity extends BaseActivity implements
-        View.OnClickListener, SwipeRefreshLayout.ChildScrollDelegate,
-        RootAdapter.OnItemClickListener<ReleaseAsset> {
+        View.OnClickListener, SwipeRefreshLayout.ChildScrollDelegate, ReactionBar.Callback,
+        RootAdapter.OnItemClickListener<ReleaseAsset>,
+        RootAdapter.OnItemLongClickListener<ReleaseAsset> {
     public static Intent makeIntent(Context context, String repoOwner, String repoName, long id) {
         return new Intent(context, ReleaseInfoActivity.class)
                 .putExtra("owner", repoOwner)
@@ -62,25 +71,26 @@ public class ReleaseInfoActivity extends BaseActivity implements
                 .putExtra("id", id);
     }
 
-    public static Intent makeIntent(Context context, String repoOwner, String repoName,
-                                    Release release) {
+    public static Intent makeIntent(Context context, String repoOwner, String repoName, String tagName) {
         return new Intent(context, ReleaseInfoActivity.class)
                 .putExtra("owner", repoOwner)
                 .putExtra("repo", repoName)
-                .putExtra("release", release);
+                .putExtra("tag", tagName);
     }
 
     private static final int ID_LOADER_RELEASE = 0;
-    private static final int ID_LOADER_BODY = 1;
 
+    private Release mRelease;
     private String mRepoOwner;
     private String mRepoName;
-    private Release mRelease;
     private long mReleaseId;
+    private String mTagName;
 
-    private Disposable mBodySubscription;
     private View mRootView;
     private HttpImageGetter mImageGetter;
+    private ReactionBar.AddReactionMenuHelper mReactionMenuHelper;
+    private final ReactionBar.ReactionDetailsCache mReactionDetailsCache =
+            new ReactionBar.ReactionDetailsCache(this::onReactionsUpdated);
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -92,12 +102,8 @@ public class ReleaseInfoActivity extends BaseActivity implements
         mImageGetter = new HttpImageGetter(this);
         setChildScrollDelegate(this);
 
-        if (mRelease != null) {
-            handleReleaseReady();
-        } else {
-            setContentShown(false);
-            loadRelease(false);
-        }
+        setContentShown(false);
+        loadRelease(false);
     }
 
     @Nullable
@@ -117,18 +123,35 @@ public class ReleaseInfoActivity extends BaseActivity implements
         super.onInitExtras(extras);
         mRepoOwner = extras.getString("owner");
         mRepoName = extras.getString("repo");
-        mRelease = extras.getParcelable("release");
+        mTagName = extras.getString("tag");
         mReleaseId = extras.getLong("id");
     }
 
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
         getMenuInflater().inflate(R.menu.release, menu);
+        MenuItem reactItem = menu.findItem(R.id.react);
+        getMenuInflater().inflate(R.menu.release_reaction_menu, reactItem.getSubMenu());
         return super.onCreateOptionsMenu(menu);
     }
 
     @Override
+    public boolean onPrepareOptionsMenu(Menu menu) {
+        if (canAddReaction()) {
+            MenuItem reactItem = menu.findItem(R.id.react);
+            reactItem.setVisible(true);
+            mReactionMenuHelper = new ReactionBar.AddReactionMenuHelper(this,
+                    reactItem.getSubMenu(), this, () -> mRelease.id(), mReactionDetailsCache);
+            mReactionMenuHelper.startLoadingIfNeeded();
+        }
+        return super.onPrepareOptionsMenu(menu);
+    }
+
+    @Override
     public boolean onOptionsItemSelected(MenuItem item) {
+        if (mReactionMenuHelper != null && mReactionMenuHelper.onItemClick(item)) {
+            return true;
+        }
         if (item.getItemId() == R.id.browser) {
             IntentUtils.launchBrowser(this, Uri.parse(mRelease.htmlUrl()));
             return true;
@@ -143,15 +166,11 @@ public class ReleaseInfoActivity extends BaseActivity implements
 
     @Override
     public void onRefresh() {
-        if (!getIntent().hasExtra("release")) {
-            mRelease = null;
-            setContentShown(false);
-            mImageGetter.clearHtmlCache();
-            if (mBodySubscription != null) {
-                mBodySubscription.dispose();
-            }
-            loadRelease(true);
-        }
+        mRelease = null;
+        setContentShown(false);
+        mImageGetter.clearHtmlCache();
+        mReactionDetailsCache.clear();
+        loadRelease(true);
         super.onRefresh();
     }
 
@@ -171,6 +190,7 @@ public class ReleaseInfoActivity extends BaseActivity implements
     protected void onDestroy() {
         super.onDestroy();
         mImageGetter.destroy();
+        mReactionDetailsCache.destroy();
     }
 
     @Override
@@ -184,7 +204,7 @@ public class ReleaseInfoActivity extends BaseActivity implements
             name = mRelease.tagName();
         }
         getSupportActionBar().setTitle(name);
-        loadBody();
+        invalidateOptionsMenu();
         fillData();
     }
 
@@ -193,10 +213,11 @@ public class ReleaseInfoActivity extends BaseActivity implements
         AvatarHandler.assignAvatar(gravatar, mRelease.author());
         gravatar.setOnClickListener(this);
 
-        StyleableTextView details = findViewById(R.id.tv_releaseinfo);
+        TextView details = findViewById(R.id.tv_releaseinfo);
+        Date releaseDateToShow = mRelease.publishedAt() != null ? mRelease.publishedAt() : mRelease.createdAt();
         String detailsText = getString(R.string.release_details,
                 ApiHelpers.getUserLogin(this, mRelease.author()),
-                StringUtils.formatRelativeTime(this, mRelease.createdAt(), true));
+                StringUtils.formatRelativeTime(this, releaseDateToShow, true));
         StringUtils.applyBoldTagsAndSetText(details, detailsText);
 
         TextView releaseType = findViewById(R.id.tv_releasetype);
@@ -212,11 +233,24 @@ public class ReleaseInfoActivity extends BaseActivity implements
         tag.setText(getString(R.string.release_tag, mRelease.tagName()));
         tag.setOnClickListener(this);
 
+        TextView body = findViewById(R.id.tv_release_notes);
+        if (!TextUtils.isEmpty(mRelease.bodyHtml())) {
+            mImageGetter.bind(body, mRelease.bodyHtml(), mRelease.id());
+        } else {
+            body.setText(R.string.release_no_releasenotes);
+        }
+        ReactionBar reactionBar = findViewById(R.id.reactions);
+        reactionBar.setReactions(mRelease.reactions());
+        reactionBar.setDetailsCache(mReactionDetailsCache);
+        reactionBar.setAddReactionPopupMenu(R.menu.release_reaction_menu);
+        reactionBar.setCallback(this, () -> mRelease.id());
+
         if (mRelease.assets() != null && !mRelease.assets().isEmpty()) {
             RecyclerView downloadsList = findViewById(R.id.download_list);
             ReleaseAssetAdapter adapter = new ReleaseAssetAdapter(this);
             adapter.addAll(mRelease.assets());
             adapter.setOnItemClickListener(this);
+            adapter.setOnItemLongClickListener(this);
             downloadsList.setLayoutManager(new LinearLayoutManager(this));
             downloadsList.setNestedScrollingEnabled(false);
             downloadsList.setAdapter(adapter);
@@ -225,23 +259,52 @@ public class ReleaseInfoActivity extends BaseActivity implements
         }
     }
 
-    private void fillNotes(Optional<String> bodyHtmlOpt) {
-        TextView body = findViewById(R.id.tv_release_notes);
+    @Override
+    public boolean canAddReaction() {
+        return Gh4Application.get().isAuthorized() && mRelease != null && !mRelease.draft();
+    }
 
-        if (bodyHtmlOpt.isPresent()) {
-            mImageGetter.bind(body, bodyHtmlOpt.get(), mRelease.id());
-        } else {
-            body.setText(R.string.release_no_releasenotes);
-        }
+    @Override
+    public Single<List<Reaction>> loadReactionDetails(ReactionBar.Item item, boolean bypassCache) {
+        var service = ServiceFactory.getForFullPagedLists(ReactionService.class, bypassCache);
+        return ApiHelpers.PageIterator
+                .toSingle(page -> service.getReleaseReactions(mRepoOwner, mRepoName, mRelease.id(), page));
+    }
 
-        body.setVisibility(View.VISIBLE);
-        findViewById(R.id.pb_releasenotes).setVisibility(View.GONE);
+    @Override
+    public Single<Reaction> addReaction(ReactionBar.Item item, String content) {
+        ReactionService service = ServiceFactory.get(ReactionService.class, false);
+        ReactionRequest request = ReactionRequest.builder().content(content).build();
+        return service.createReleaseReaction(mRepoOwner, mRepoName, mRelease.id(), request)
+                .map(ApiHelpers::throwOnFailure)
+                .compose(RxUtils.wrapWithErrorSnackbar(this, R.string.add_reaction_error));
+    }
+
+    @Override
+    public Single<Boolean> deleteReaction(ReactionBar.Item item, long reactionId) {
+        ReactionService service = ServiceFactory.get(ReactionService.class, false);
+        return service.deleteReleaseReaction(mRepoOwner, mRepoName, mRelease.id(), reactionId)
+                .map(ApiHelpers::mapToTrueOnSuccess)
+                .compose(RxUtils.wrapWithErrorSnackbar(this, R.string.remove_reaction_error));
+    }
+
+    private void onReactionsUpdated(ReactionBar.Item item, Reactions reactions) {
+        ReactionBar reactionBar = findViewById(R.id.reactions);
+        reactionBar.setReactions(reactions);
     }
 
     @Override
     public void onItemClick(ReleaseAsset item) {
-        UiUtils.enqueueDownloadWithPermissionCheck(this, item.url(),
-                item.contentType(), item.name(), item.label(), "application/octet-stream");
+        DownloadUtils.enqueueDownloadWithPermissionCheck(this, item);
+    }
+
+    @Override
+    public boolean onItemLongClick(ReleaseAsset item) {
+        String label = "Release asset " + item.name();
+        IntentUtils.copyToClipboard(this, label, item.browserDownloadUrl());
+        Snackbar.make(getRootLayout(), R.string.link_copied, Snackbar.LENGTH_SHORT).show();
+
+        return true;
     }
 
     @Override
@@ -266,7 +329,13 @@ public class ReleaseInfoActivity extends BaseActivity implements
     private void loadRelease(boolean force) {
         RepositoryReleaseService service = ServiceFactory.get(RepositoryReleaseService.class, force);
 
-        service.getRelease(mRepoOwner, mRepoName, mReleaseId)
+        Single<Response<Release>> releaseSingle;
+        if (mTagName != null) {
+            releaseSingle = service.getRelaseByTagName(mRepoOwner, mRepoName, mTagName);
+        } else {
+            releaseSingle = service.getRelease(mRepoOwner, mRepoName, mReleaseId);
+        }
+        releaseSingle
                 .map(ApiHelpers::throwOnFailure)
                 .compose(makeLoaderSingle(ID_LOADER_RELEASE, force))
                 .subscribe(result -> {
@@ -274,25 +343,5 @@ public class ReleaseInfoActivity extends BaseActivity implements
                     handleReleaseReady();
                     setContentShown(true);
                 }, this::handleLoadFailure);
-    }
-
-    private void loadBody() {
-        final Single<Optional<String>> htmlSingle;
-        if (TextUtils.isEmpty(mRelease.body())) {
-            htmlSingle = Single.just(Optional.absent());
-        } else {
-            MarkdownService service = ServiceFactory.get(MarkdownService.class, false);
-            RequestMarkdown request = RequestMarkdown.builder()
-                    .context(mRepoOwner + "/" + mRepoName)
-                    .mode("gfm")
-                    .text(mRelease.body())
-                    .build();
-            htmlSingle = service.renderMarkdown(request)
-                    .map(ApiHelpers::throwOnFailure)
-                    .map(Optional::of);
-        }
-        mBodySubscription = htmlSingle
-                .compose(makeLoaderSingle(ID_LOADER_BODY, false))
-                .subscribe(this::fillNotes, this::handleLoadFailure);
     }
 }

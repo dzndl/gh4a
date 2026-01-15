@@ -19,9 +19,12 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.res.Resources;
 import android.graphics.Typeface;
+
+import androidx.annotation.StringRes;
 import androidx.recyclerview.widget.RecyclerView;
 import android.text.SpannableStringBuilder;
 import android.text.TextUtils;
+import android.text.style.StyleSpan;
 import android.text.style.TextAppearanceSpan;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -34,18 +37,18 @@ import com.gh4a.activities.UserActivity;
 import com.gh4a.utils.ApiHelpers;
 import com.gh4a.utils.AvatarHandler;
 import com.gh4a.utils.StringUtils;
-import com.gh4a.widget.CustomTypefaceSpan;
 import com.gh4a.widget.EllipsizeLineSpan;
-import com.gh4a.widget.StyleableTextView;
 import com.meisolsson.githubsdk.model.Gist;
 import com.meisolsson.githubsdk.model.GitHubEvent;
 import com.meisolsson.githubsdk.model.GitHubEventType;
 import com.meisolsson.githubsdk.model.GitHubWikiPage;
 import com.meisolsson.githubsdk.model.Issue;
+import com.meisolsson.githubsdk.model.Label;
 import com.meisolsson.githubsdk.model.PullRequest;
 import com.meisolsson.githubsdk.model.ReferenceType;
 import com.meisolsson.githubsdk.model.Release;
 import com.meisolsson.githubsdk.model.Repository;
+import com.meisolsson.githubsdk.model.Review;
 import com.meisolsson.githubsdk.model.ReviewComment;
 import com.meisolsson.githubsdk.model.Team;
 import com.meisolsson.githubsdk.model.User;
@@ -65,11 +68,13 @@ import com.meisolsson.githubsdk.model.payload.IssuesPayload;
 import com.meisolsson.githubsdk.model.payload.MemberPayload;
 import com.meisolsson.githubsdk.model.payload.PullRequestPayload;
 import com.meisolsson.githubsdk.model.payload.PullRequestReviewCommentPayload;
+import com.meisolsson.githubsdk.model.payload.PullRequestReviewPayload;
 import com.meisolsson.githubsdk.model.payload.PushPayload;
 import com.meisolsson.githubsdk.model.payload.ReleasePayload;
 import com.meisolsson.githubsdk.model.payload.TeamAddPayload;
 import com.vdurmont.emoji.EmojiParser;
 
+import java.util.ArrayList;
 import java.util.List;
 
 public class EventAdapter extends RootAdapter<GitHubEvent, EventAdapter.EventViewHolder> {
@@ -93,13 +98,17 @@ public class EventAdapter extends RootAdapter<GitHubEvent, EventAdapter.EventVie
         AvatarHandler.assignAvatar(holder.ivGravatar, actor);
         holder.ivGravatar.setTag(actor);
 
-        holder.tvActor.setText(ApiHelpers.getUserLogin(mContext, actor));
+        holder.tvActor.setText(ApiHelpers.getUserLoginWithType(mContext, actor));
 
-        StringUtils.applyBoldTagsAndSetText(holder.tvTitle, formatTitle(event));
+        SpannableStringBuilder title = StringUtils.applyBoldTags(formatTitle(event));
+        Label labelInTitle = extractLabelForTitle(event);
+        StringUtils.replaceLabelPlaceholder(mContext, title, labelInTitle);
+        holder.tvTitle.setText(title);
+
         holder.tvCreatedAt.setText(StringUtils.formatRelativeTime(
                 mContext, event.createdAt(), false));
 
-        CharSequence content = formatDescription(event, holder.tvDesc.getTypefaceValue());
+        CharSequence content = formatDescription(event);
         holder.tvDesc.setText(content);
         holder.tvDesc.setVisibility(content != null ? View.VISIBLE : View.GONE);
     }
@@ -122,7 +131,7 @@ public class EventAdapter extends RootAdapter<GitHubEvent, EventAdapter.EventVie
         return true;
     }
 
-    private CharSequence formatDescription(GitHubEvent event, int typefaceValue) {
+    private CharSequence formatDescription(GitHubEvent event) {
         GitHubEventType eventType = event.type();
         GitHubEvent.RepoIdentifier eventRepo = event.repo();
 
@@ -170,7 +179,7 @@ public class EventAdapter extends RootAdapter<GitHubEvent, EventAdapter.EventVie
 
             case ForkEvent: {
                 ForkPayload payload = (ForkPayload) event.payload();
-                return res.getString(R.string.event_fork_desc, formatToRepoName(payload.forkee()));
+                return res.getString(R.string.event_fork_desc, ApiHelpers.formatRepoName(mContext, payload.forkee()));
             }
 
             case GollumEvent: {
@@ -192,7 +201,13 @@ public class EventAdapter extends RootAdapter<GitHubEvent, EventAdapter.EventVie
 
             case IssuesEvent: {
                 IssuesPayload payload = (IssuesPayload) event.payload();
-                return payload.issue().title();
+                String desc = payload.issue().title();
+                if (payload.action() == IssuesPayload.Action.Assigned ||
+                        payload.action() == IssuesPayload.Action.Unassigned) {
+                    return formatAssignmentDesc(res, desc, payload.assignees());
+                } else {
+                    return desc;
+                }
             }
 
             case PublicEvent:
@@ -201,15 +216,28 @@ public class EventAdapter extends RootAdapter<GitHubEvent, EventAdapter.EventVie
             case PullRequestEvent: {
                 PullRequestPayload payload = (PullRequestPayload) event.payload();
                 PullRequest pullRequest = payload.pullRequest();
+                String title = pullRequest.title();
 
-                if (!StringUtils.isBlank(pullRequest.title())) {
+                if (payload.action() == PullRequestPayload.Action.Assigned ||
+                        payload.action() == PullRequestPayload.Action.Unassigned) {
+                    return formatAssignmentDesc(res, title, payload.assignees());
+                } else if (!StringUtils.isBlank(title)) {
                     return res.getString(R.string.event_pull_request_desc,
-                            pullRequest.title(), pullRequest.commits(),
+                            title, pullRequest.commits(),
                             pullRequest.additions(), pullRequest.deletions());
                 }
                 break;
             }
 
+            case PullRequestReviewEvent: {
+                PullRequestReviewPayload payload = (PullRequestReviewPayload) event.payload();
+                Review review = payload.review();
+                String body = review.body();
+                if (body != null) {
+                    return EmojiParser.parseToUnicode(review.body());
+                }
+                break;
+            }
             case PullRequestReviewCommentEvent: {
                 PullRequestReviewCommentPayload payload =
                         (PullRequestReviewCommentPayload) event.payload();
@@ -248,7 +276,7 @@ public class EventAdapter extends RootAdapter<GitHubEvent, EventAdapter.EventVie
                                 ssb.length() - sha.length(), ssb.length(), 0);
 
                         ssb.append(" ");
-                        ssb.append(getFirstLine(EmojiParser.parseToUnicode(commit.message())));
+                        ssb.append(StringUtils.getFirstLine(EmojiParser.parseToUnicode(commit.message())));
                         ssb.setSpan(new EllipsizeLineSpan(i == (count - 1) ? 0 : bottomMargin),
                                 lastLength, ssb.length(), 0);
                     }
@@ -256,7 +284,7 @@ public class EventAdapter extends RootAdapter<GitHubEvent, EventAdapter.EventVie
                         String text = res.getString(R.string.event_push_desc, count - max);
                         ssb.append("\n");
                         ssb.append(text);
-                        ssb.setSpan(new CustomTypefaceSpan(typefaceValue, Typeface.ITALIC),
+                        ssb.setSpan(new StyleSpan(Typeface.ITALIC),
                                 ssb.length() - text.length(), ssb.length(), 0);
                     }
                     return ssb;
@@ -292,15 +320,25 @@ public class EventAdapter extends RootAdapter<GitHubEvent, EventAdapter.EventVie
         return null;
     }
 
-    private String getFirstLine(String input) {
-        if (input == null) {
-            return null;
+    private CharSequence formatAssignmentDesc(Resources res, String desc, List<User> assignees) {
+        List<String> assigneeNames = new ArrayList<>();
+        if (assignees != null) {
+            for (User assignee : assignees) {
+                if (assignee.login() != null) {
+                    assigneeNames.add(assignee.login());
+                }
+            }
         }
-        int pos = input.indexOf('\n');
-        if (pos < 0) {
-            return input;
+        String assigneeText = assigneeNames.isEmpty()
+                ? res.getString(R.string.event_issue_unassigned_desc)
+                : res.getString(R.string.event_issue_assigned_desc, TextUtils.join(", ", assigneeNames));
+        final String finalDesc;
+        if (TextUtils.isEmpty(desc)) {
+            finalDesc = assigneeText;
+        } else {
+            finalDesc = desc + "\n" + assigneeText;
         }
-        return input.substring(0, pos);
+        return StringUtils.applyBoldTags(finalDesc);
     }
 
     private String formatTitle(GitHubEvent event) {
@@ -403,6 +441,10 @@ public class EventAdapter extends RootAdapter<GitHubEvent, EventAdapter.EventVie
                     case Opened: resId = R.string.event_issues_open_title; break;
                     case Closed: resId = R.string.event_issues_close_title; break;
                     case Reopened: resId = R.string.event_issues_reopen_title; break;
+                    case Labeled: resId = R.string.event_issues_label_title; break;
+                    case Unlabeled: resId = R.string.event_issues_unlabel_title; break;
+                    case Assigned: resId = R.string.event_issues_assign_title; break;
+                    case Unassigned: resId = R.string.event_issues_unassign_title; break;
                     default: return "";
                 }
                 return res.getString(resId, payload.issue().number(),
@@ -429,9 +471,19 @@ public class EventAdapter extends RootAdapter<GitHubEvent, EventAdapter.EventVie
                         resId = R.string.event_pr_open_title;
                         break;
                     case Closed:
-                        resId = pr.merged()
-                                ? R.string.event_pr_merge_title
-                                : R.string.event_pr_close_title;
+                        resId = R.string.event_pr_close_title;
+                        break;
+                    case Labeled:
+                        resId = R.string.event_pr_label_title;
+                        break;
+                    case Unlabeled:
+                        resId = R.string.event_pr_unlabel_title;
+                        break;
+                    case Assigned:
+                        resId = R.string.event_pr_assign_title;
+                        break;
+                    case Unassigned:
+                        resId = R.string.event_pr_unassign_title;
                         break;
                     case Reopened:
                         resId = R.string.event_pr_reopen_title;
@@ -439,10 +491,22 @@ public class EventAdapter extends RootAdapter<GitHubEvent, EventAdapter.EventVie
                     case Synchronized:
                         resId = R.string.event_pr_update_title;
                         break;
+                    case Merged:
+                        resId = R.string.event_pr_merge_title;
+                        break;
                     default:
                         return "";
                 }
                 return res.getString(resId, payload.number(), formatFromRepoIdentifier(eventRepo));
+            }
+
+            case PullRequestReviewEvent: {
+                PullRequestReviewPayload payload = (PullRequestReviewPayload) event.payload();
+                PullRequest pr = payload.pullRequest();
+
+                // assuming action is 'created' for now
+                return res.getString(R.string.event_review_title, pr.number(),
+                        formatFromRepoIdentifier(eventRepo));
             }
 
             case PullRequestReviewCommentEvent: {
@@ -482,7 +546,7 @@ public class EventAdapter extends RootAdapter<GitHubEvent, EventAdapter.EventVie
                     Repository repo = payload.repository();
                     if (repo != null) {
                         return res.getString(R.string.event_team_repo_add,
-                                formatToRepoName(repo), team.name());
+                                ApiHelpers.formatRepoName(mContext, repo), team.name());
                     }
                 }
                 break;
@@ -494,6 +558,16 @@ public class EventAdapter extends RootAdapter<GitHubEvent, EventAdapter.EventVie
         }
 
         return "";
+    }
+
+    private static Label extractLabelForTitle(GitHubEvent event) {
+        switch (event.type()) {
+            case IssuesEvent:
+                return ((IssuesPayload) event.payload()).label();
+            case PullRequestEvent:
+                return ((PullRequestPayload) event.payload()).label();
+        }
+        return null;
     }
 
     public static boolean hasInvalidPayload(GitHubEvent event) {
@@ -513,13 +587,6 @@ public class EventAdapter extends RootAdapter<GitHubEvent, EventAdapter.EventVie
         return mContext.getString(R.string.deleted);
     }
 
-    private String formatToRepoName(Repository repository) {
-        if (repository != null && repository.owner() != null) {
-            return repository.owner().login() + "/" + repository.name();
-        }
-        return mContext.getString(R.string.deleted);
-    }
-
     /**
      * The Class ViewHolder.
      */
@@ -535,8 +602,8 @@ public class EventAdapter extends RootAdapter<GitHubEvent, EventAdapter.EventVie
 
         private final ImageView ivGravatar;
         private final TextView tvActor;
-        private final StyleableTextView tvTitle;
-        private final StyleableTextView tvDesc;
+        private final TextView tvTitle;
+        private final TextView tvDesc;
         private final TextView tvCreatedAt;
     }
 }

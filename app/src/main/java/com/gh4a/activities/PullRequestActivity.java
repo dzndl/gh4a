@@ -22,16 +22,7 @@ import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Parcelable;
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
-import androidx.annotation.StringRes;
-import com.google.android.material.appbar.AppBarLayout;
-
-import androidx.appcompat.view.ContextThemeWrapper;
-import androidx.coordinatorlayout.widget.CoordinatorLayout;
-import androidx.fragment.app.DialogFragment;
-import androidx.fragment.app.Fragment;
-import androidx.appcompat.app.AlertDialog;
+import android.util.Pair;
 import android.view.LayoutInflater;
 import android.view.Menu;
 import android.view.MenuItem;
@@ -39,7 +30,6 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
-import android.widget.EditText;
 import android.widget.Spinner;
 import android.widget.TextView;
 
@@ -49,8 +39,9 @@ import com.gh4a.R;
 import com.gh4a.ServiceFactory;
 import com.gh4a.fragment.CommitCompareFragment;
 import com.gh4a.fragment.ConfirmationDialogFragment;
+import com.gh4a.fragment.PullRequestConversationFragment;
 import com.gh4a.fragment.PullRequestFilesFragment;
-import com.gh4a.fragment.PullRequestFragment;
+import com.gh4a.utils.ActivityResultHelpers;
 import com.gh4a.utils.ApiHelpers;
 import com.gh4a.utils.IntentUtils;
 import com.gh4a.utils.RxUtils;
@@ -59,7 +50,8 @@ import com.gh4a.utils.Triplet;
 import com.gh4a.utils.UiUtils;
 import com.gh4a.widget.BottomSheetCompatibleScrollingViewBehavior;
 import com.gh4a.widget.IssueStateTrackingFloatingActionButton;
-
+import com.google.android.material.appbar.AppBarLayout;
+import com.google.android.material.textfield.TextInputLayout;
 import com.meisolsson.githubsdk.model.Issue;
 import com.meisolsson.githubsdk.model.IssueState;
 import com.meisolsson.githubsdk.model.PullRequest;
@@ -75,14 +67,31 @@ import com.meisolsson.githubsdk.service.pull_request.PullRequestService;
 
 import java.util.Locale;
 
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import androidx.annotation.StringRes;
+import androidx.appcompat.app.AlertDialog;
+import androidx.appcompat.view.ContextThemeWrapper;
+import androidx.coordinatorlayout.widget.CoordinatorLayout;
+import androidx.fragment.app.DialogFragment;
+import androidx.fragment.app.Fragment;
 import io.reactivex.Single;
+import io.reactivex.schedulers.Schedulers;
 
 public class PullRequestActivity extends BaseFragmentPagerActivity implements
         View.OnClickListener, ConfirmationDialogFragment.Callback,
         PullRequestFilesFragment.CommentUpdateListener {
+    public static Intent makeIntent(Context context, Issue issue) {
+        Pair<String, String> repoOwnerAndName = ApiHelpers.extractRepoOwnerAndNameFromIssue(issue);
+        return makeIntent(context, repoOwnerAndName.first, repoOwnerAndName.second, issue.number());
+    }
+
     public static Intent makeIntent(Context context, String repoOwner, String repoName, int number) {
         return makeIntent(context, repoOwner, repoName, number, -1, null);
     }
+
     public static Intent makeIntent(Context context, String repoOwner, String repoName,
             int number, int initialPage, IntentUtils.InitialCommentMarker initialComment) {
         return new Intent(context, PullRequestActivity.class)
@@ -97,8 +106,13 @@ public class PullRequestActivity extends BaseFragmentPagerActivity implements
     public static final int PAGE_COMMITS = 1;
     public static final int PAGE_FILES = 2;
 
-    private static final int REQUEST_EDIT_ISSUE = 1001;
-    private static final int REQUEST_CREATE_REVIEW = 1002;
+    private final ActivityResultLauncher<Intent> mEditIssueLauncher = registerForActivityResult(
+            new ActivityResultContracts.StartActivityForResult(),
+            new ActivityResultHelpers.ActivityResultSuccessCallback(() -> {
+                setResult(Activity.RESULT_OK);
+                onRefresh();
+            })
+    );
 
     private String mRepoOwner;
     private String mRepoName;
@@ -109,13 +123,23 @@ public class PullRequestActivity extends BaseFragmentPagerActivity implements
 
     private Issue mIssue;
     private PullRequest mPullRequest;
-    private PullRequestFragment mPullRequestFragment;
+    private PullRequestConversationFragment mConversationFragment;
     private IssueStateTrackingFloatingActionButton mEditFab;
     private Review mPendingReview;
     private boolean mPendingReviewLoaded;
 
     private ViewGroup mHeader;
     private int[] mHeaderColorAttrs;
+
+    private final ActivityResultLauncher<Intent> mCreateReviewLauncher = registerForActivityResult(
+            new ActivityResultContracts.StartActivityForResult(),
+            new ActivityResultHelpers.ActivityResultSuccessCallback(() -> {
+                if (mConversationFragment != null) {
+                    mConversationFragment.reloadEvents(false);
+                }
+                loadPendingReview(true);
+            })
+    );
 
     private static final int[] TITLES = new int[]{
             R.string.pull_request_conversation, R.string.commits, R.string.pull_request_files
@@ -168,22 +192,25 @@ public class PullRequestActivity extends BaseFragmentPagerActivity implements
                 && ApiHelpers.userEquals(mIssue.user(), mIssue.closedBy());
         boolean canClose = mPullRequest != null && authorized && (isCreator || isCollaborator);
         boolean canOpen = canClose && (isCollaborator || closerIsCreator);
-        boolean canMerge = canClose && isCollaborator;
+        boolean canMerge = canClose && isCollaborator && !mPullRequest.draft();
 
         if (!canClose || isClosed) {
             menu.removeItem(R.id.pull_close);
         }
-        if (!canOpen || !isClosed) {
+        if (!canOpen || !isClosed || mPullRequest.merged()) {
             menu.removeItem(R.id.pull_reopen);
-        } else if (isClosed && mPullRequest.merged()) {
-            menu.findItem(R.id.pull_reopen).setEnabled(false);
         }
-        if (!canMerge) {
+
+        if (!canMerge || isClosed) {
             menu.removeItem(R.id.pull_merge);
-        } else if (mPullRequest.merged()
-                || mPullRequest.mergeable() == null || !mPullRequest.mergeable()) {
-            MenuItem mergeItem = menu.findItem(R.id.pull_merge);
-            mergeItem.setEnabled(false);
+        } else {
+            // Mergeability is checked according to the information found here: https://github.com/octokit/octokit.net/issues/1763
+            boolean isMergeable = mPullRequest.mergeableState() == PullRequest.MergeableState.Clean ||
+                    mPullRequest.mergeableState() == PullRequest.MergeableState.Unstable;
+            if (!isMergeable) {
+                MenuItem mergeItem = menu.findItem(R.id.pull_merge);
+                mergeItem.setEnabled(false);
+            }
         }
 
         if (mPullRequest == null) {
@@ -234,25 +261,6 @@ public class PullRequestActivity extends BaseFragmentPagerActivity implements
     }
 
     @Override
-    public void onActivityResult(int requestCode, int resultCode, Intent data) {
-        if (requestCode == REQUEST_EDIT_ISSUE) {
-            if (resultCode == Activity.RESULT_OK) {
-                setResult(Activity.RESULT_OK);
-                onRefresh();
-            }
-        } else if (requestCode == REQUEST_CREATE_REVIEW) {
-            if (resultCode == Activity.RESULT_OK) {
-                if (mPullRequestFragment != null) {
-                    mPullRequestFragment.reloadEvents(false);
-                }
-                loadPendingReview(true);
-            }
-        } else {
-            super.onActivityResult(requestCode, resultCode, data);
-        }
-    }
-
-    @Override
     protected void onInitExtras(Bundle extras) {
         super.onInitExtras(extras);
         mRepoOwner = extras.getString("owner");
@@ -295,16 +303,16 @@ public class PullRequestActivity extends BaseFragmentPagerActivity implements
 
     @Override
     protected Fragment makeFragment(int position) {
-        if (position == 1) {
+        if (position == PAGE_COMMITS) {
             PullRequestMarker base = mPullRequest.base();
             PullRequestMarker head = mPullRequest.head();
             return CommitCompareFragment.newInstance(mRepoOwner, mRepoName, mPullRequestNumber,
                     base.label(), base.sha(), head.label(), head.sha());
-        } else if (position == 2) {
+        } else if (position == PAGE_FILES) {
             return PullRequestFilesFragment.newInstance(mRepoOwner, mRepoName,
                     mPullRequestNumber, mPullRequest.head().sha());
         } else {
-            Fragment f = PullRequestFragment.newInstance(mPullRequest,
+            Fragment f = PullRequestConversationFragment.newInstance(mPullRequest,
                     mIssue, mIsCollaborator, mInitialComment);
             mInitialComment = null;
             return f;
@@ -313,15 +321,15 @@ public class PullRequestActivity extends BaseFragmentPagerActivity implements
 
     @Override
     protected void onFragmentInstantiated(Fragment f, int position) {
-        if (position == 0) {
-            mPullRequestFragment = (PullRequestFragment) f;
+        if (position == PAGE_CONVERSATION) {
+            mConversationFragment = (PullRequestConversationFragment) f;
         }
     }
 
     @Override
     protected void onFragmentDestroyed(Fragment f) {
-        if (f == mPullRequestFragment) {
-            mPullRequestFragment = null;
+        if (f == mConversationFragment) {
+            mConversationFragment = null;
         }
     }
 
@@ -337,8 +345,8 @@ public class PullRequestActivity extends BaseFragmentPagerActivity implements
 
     @Override
     public void onCommentsUpdated() {
-        if (mPullRequestFragment != null) {
-            mPullRequestFragment.reloadEvents(true);
+        if (mConversationFragment != null) {
+            mConversationFragment.reloadEvents(true);
         }
     }
 
@@ -346,7 +354,7 @@ public class PullRequestActivity extends BaseFragmentPagerActivity implements
     public void onClick(View v) {
         if (v == mEditFab) {
             Intent editIntent = IssueEditActivity.makeEditIntent(this, mRepoOwner, mRepoName, mIssue);
-            startActivityForResult(editIntent, REQUEST_EDIT_ISSUE);
+            mEditIssueLauncher.launch(editIntent);
         } else if (v.getId() == R.id.iv_gravatar) {
             Intent intent = UserActivity.makeIntent(this, (User) v.getTag());
             if (intent != null) {
@@ -374,8 +382,8 @@ public class PullRequestActivity extends BaseFragmentPagerActivity implements
 
     private void showReviewDialog() {
         Intent intent = CreateReviewActivity.makeIntent(this, mRepoOwner, mRepoName,
-                mPullRequestNumber, mPendingReview);
-        startActivityForResult(intent, REQUEST_CREATE_REVIEW);
+                mPullRequestNumber, mPullRequest.draft(), mPendingReview);
+        mCreateReviewLauncher.launch(intent);
     }
 
     private void updateFabVisibility() {
@@ -400,6 +408,7 @@ public class PullRequestActivity extends BaseFragmentPagerActivity implements
         if (mEditFab != null) {
             mEditFab.setState(mPullRequest.state());
             mEditFab.setMerged(mPullRequest.merged());
+            mEditFab.setDraft(mPullRequest.draft());
         }
     }
 
@@ -415,6 +424,11 @@ public class PullRequestActivity extends BaseFragmentPagerActivity implements
             stateTextResId = R.string.closed;
             mHeaderColorAttrs = new int[] {
                 R.attr.colorIssueClosed, R.attr.colorIssueClosedDark
+            };
+        } else if (mPullRequest.draft()) {
+            stateTextResId = R.string.draft;
+            mHeaderColorAttrs = new int[] {
+                R.attr.colorPullRequestDraft, R.attr.colorPullRequestDraftDark
             };
         } else {
             stateTextResId = R.string.open;
@@ -433,8 +447,8 @@ public class PullRequestActivity extends BaseFragmentPagerActivity implements
     }
 
     private void handlePullRequestUpdate() {
-        if (mPullRequestFragment != null) {
-            mPullRequestFragment.updateState(mPullRequest);
+        if (mConversationFragment != null) {
+            mConversationFragment.updateState(mPullRequest);
         }
         if (mIssue != null) {
             Issue.Builder builder = mIssue.toBuilder().state(mPullRequest.state());
@@ -470,11 +484,12 @@ public class PullRequestActivity extends BaseFragmentPagerActivity implements
                 }, error -> handleActionFailure("Updating pull request failed", error));
     }
 
-    private void mergePullRequest(String commitMessage, MergeRequest.Method mergeMethod) {
+    private void mergePullRequest(String commitTitle, String commitDetails, MergeRequest.Method mergeMethod) {
         String errorMessage = getString(R.string.pull_error_merge, mPullRequest.number());
         PullRequestService service = ServiceFactory.get(PullRequestService.class, false);
         MergeRequest request = MergeRequest.builder()
-                .commitMessage(commitMessage)
+                .commitTitle(commitTitle)
+                .commitMessage(commitDetails)
                 .method(mergeMethod)
                 .build();
 
@@ -497,11 +512,13 @@ public class PullRequestActivity extends BaseFragmentPagerActivity implements
         IssueService issueService = ServiceFactory.get(IssueService.class, force);
 
         Single<PullRequest> prSingle = prService.getPullRequest(mRepoOwner, mRepoName, mPullRequestNumber)
-                .map(ApiHelpers::throwOnFailure);
+                .map(ApiHelpers::throwOnFailure)
+                .subscribeOn(Schedulers.io());
         Single<Issue> issueSingle = issueService.getIssue(mRepoOwner, mRepoName, mPullRequestNumber)
-                .map(ApiHelpers::throwOnFailure);
-        Single<Boolean> isCollaboratorSingle =
-                SingleFactory.isAppUserRepoCollaborator(mRepoOwner, mRepoName, force);
+                .map(ApiHelpers::throwOnFailure)
+                .subscribeOn(Schedulers.io());
+        Single<Boolean> isCollaboratorSingle = SingleFactory.isAppUserRepoCollaborator(mRepoOwner, mRepoName, force)
+                .subscribeOn(Schedulers.io());
 
         Single.zip(issueSingle, prSingle, isCollaboratorSingle, Triplet::create)
                 .compose(makeLoaderSingle(0, force))
@@ -524,21 +541,18 @@ public class PullRequestActivity extends BaseFragmentPagerActivity implements
 
     private void loadPendingReview(boolean force) {
         String ownLogin = Gh4Application.get().getAuthLogin();
-        PullRequestReviewService service = ServiceFactory.get(PullRequestReviewService.class, force);
+        var service = ServiceFactory.getForFullPagedLists(PullRequestReviewService.class, force);
 
         ApiHelpers.PageIterator
-                .toSingle(page -> service.getReviews(mRepoOwner, mRepoName, mPullRequestNumber, page))
-                .compose(RxUtils.filterAndMapToFirst(r -> {
-                    return r.state() == ReviewState.Pending
-                            && ApiHelpers.loginEquals(r.user(), ownLogin);
-                }))
+                .first(page -> service.getReviews(mRepoOwner, mRepoName, mPullRequestNumber, page),
+                        r -> r.state() == ReviewState.Pending && ApiHelpers.loginEquals(r.user(), ownLogin))
                 .compose(makeLoaderSingle(1, force))
                 .doOnSubscribe(disposable -> {
                     mPendingReviewLoaded = false;
                     supportInvalidateOptionsMenu();
                 })
                 .subscribe(result -> {
-                    mPendingReview = result.orNull();
+                    mPendingReview = result.orElse(null);
                     mPendingReviewLoaded = true;
                     supportInvalidateOptionsMenu();
                 }, this::handleLoadFailure);
@@ -560,6 +574,12 @@ public class PullRequestActivity extends BaseFragmentPagerActivity implements
     }
 
     public static class MergeDialogFragment extends DialogFragment {
+
+        private TextInputLayout mDetailsField;
+        private TextInputLayout mTitleField;
+        private Spinner mMergeMethodSelector;
+        private PullRequest mPr;
+
         public static MergeDialogFragment newInstance(PullRequest pr) {
             MergeDialogFragment f = new MergeDialogFragment();
             Bundle args = new Bundle();
@@ -572,16 +592,36 @@ public class PullRequestActivity extends BaseFragmentPagerActivity implements
         @Override
         public Dialog onCreateDialog(Bundle savedInstanceState) {
             LayoutInflater inflater = LayoutInflater.from(getContext());
-            final PullRequest pr = getArguments().getParcelable("pr");
-            String title = getString(R.string.pull_message_dialog_title, pr.number());
+            mPr = getArguments().getParcelable("pr");
+
             View view = inflater.inflate(R.layout.pull_merge_message_dialog, null);
+            mDetailsField = view.findViewById(R.id.details_field);
+            mTitleField = view.findViewById(R.id.title_field);
+            // This is needed to make the text field single-line but with line wrapping.
+            // Setting these properties in the XML does not produce the wanted effect.
+            mTitleField.getEditText().setHorizontallyScrolling(false);
+            mTitleField.getEditText().setMaxLines(3);
 
-            final View editorNotice = view.findViewById(R.id.notice);
-            final EditText editor = view.findViewById(R.id.et_commit_message);
-            editor.setText(pr.title());
+            mMergeMethodSelector = view.findViewById(R.id.merge_method);
+            setupMergeMethodSpinner();
 
-            final ArrayAdapter<MergeMethodDesc> adapter =
-                    new ArrayAdapter<>(getContext(), R.layout.spinner_item);
+            final PullRequestActivity activity = (PullRequestActivity) getContext();
+            return new AlertDialog.Builder(activity)
+                    .setTitle(getString(R.string.pull_message_dialog_title, mPr.number()))
+                    .setView(view)
+                    .setPositiveButton(R.string.pull_request_merge, (dialog, which) -> {
+                        String commitTitle = mTitleField.getEditText().getText().toString();
+                        String commitDetails = mDetailsField.getEditText().getText().toString();
+                        MergeMethodDesc selectedMethod = (MergeMethodDesc) mMergeMethodSelector.getSelectedItem();
+
+                        activity.mergePullRequest(commitTitle, commitDetails, selectedMethod.action);
+                    })
+                    .setNegativeButton(getString(R.string.cancel), null)
+                    .create();
+        }
+
+        private void setupMergeMethodSpinner() {
+            final ArrayAdapter<MergeMethodDesc> adapter = new ArrayAdapter<>(getContext(), R.layout.spinner_item);
             adapter.add(new MergeMethodDesc(
                     getString(R.string.pull_merge_method_merge), MergeRequest.Method.Merge));
             adapter.add(new MergeMethodDesc(
@@ -589,32 +629,35 @@ public class PullRequestActivity extends BaseFragmentPagerActivity implements
             adapter.add(new MergeMethodDesc(
                     getString(R.string.pull_merge_method_rebase), MergeRequest.Method.Rebase));
 
-            final Spinner mergeMethod = view.findViewById(R.id.merge_method);
-            mergeMethod.setAdapter(adapter);
-            mergeMethod.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            mMergeMethodSelector.setAdapter(adapter);
+            mMergeMethodSelector.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
                 @Override
                 public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
-                    int editorVisibility = position == 2 ? View.GONE : View.VISIBLE;
-                    editorNotice.setVisibility(editorVisibility);
-                    editor.setVisibility(editorVisibility);
+                    MergeMethodDesc selectedItem = (MergeMethodDesc) parent.getItemAtPosition(position);
+                    toggleFieldsVisibility(selectedItem.action);
                 }
                 @Override
                 public void onNothingSelected(AdapterView<?> adapterView) {
                 }
             });
-
-            final PullRequestActivity activity = (PullRequestActivity) getContext();
-            return new AlertDialog.Builder(activity)
-                    .setTitle(title)
-                    .setView(view)
-                    .setPositiveButton(R.string.pull_request_merge, (dialog, which) -> {
-                        String text = editor.getText() == null ? null : editor.getText().toString();
-                        int methodIndex = mergeMethod.getSelectedItemPosition();
-
-                        activity.mergePullRequest(text, adapter.getItem(methodIndex).action);
-                    })
-                    .setNegativeButton(getString(R.string.cancel), null)
-                    .create();
         }
+
+        private void toggleFieldsVisibility(MergeRequest.Method mergeMethod) {
+            int fieldsVisibility = mergeMethod == MergeRequest.Method.Rebase ? View.GONE : View.VISIBLE;
+            mTitleField.setVisibility(fieldsVisibility);
+            mDetailsField.setVisibility(fieldsVisibility);
+            if (fieldsVisibility == View.GONE) {
+                UiUtils.hideImeForView(mTitleField);
+            }
+        }
+    }
+
+    @Nullable
+    @Override
+    protected Uri getActivityUri() {
+        return IntentUtils.createBaseUriForRepo(mRepoOwner, mRepoName)
+                .appendPath("pull")
+                .appendPath(String.valueOf(mPullRequestNumber))
+                .build();
     }
 }

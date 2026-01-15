@@ -31,9 +31,9 @@ import com.gh4a.fragment.ContentListContainerFragment;
 import com.gh4a.fragment.RepositoryEventListFragment;
 import com.gh4a.fragment.RepositoryFragment;
 import com.gh4a.utils.ApiHelpers;
+import com.gh4a.utils.DownloadUtils;
 import com.gh4a.utils.IntentUtils;
 import com.gh4a.utils.RxUtils;
-import com.gh4a.utils.UiUtils;
 import com.meisolsson.githubsdk.model.Branch;
 import com.meisolsson.githubsdk.model.Commit;
 import com.meisolsson.githubsdk.model.Repository;
@@ -44,6 +44,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import io.reactivex.Single;
+import io.reactivex.schedulers.Schedulers;
 
 public class RepositoryActivity extends BaseFragmentPagerActivity implements
         CommitListFragment.ContextSelectionCallback,
@@ -120,7 +121,7 @@ public class RepositoryActivity extends BaseFragmentPagerActivity implements
 
         setContentShown(false);
 
-        loadRepository(false);
+        loadRepository();
     }
 
     @Override
@@ -150,6 +151,10 @@ public class RepositoryActivity extends BaseFragmentPagerActivity implements
     }
 
     private void updateTitle() {
+        // The repository may have been moved or renamed, so we want to make sure that
+        // the title matches the current name of the repository
+        mActionBar.setTitle(mRepository.fullName());
+
         mActionBar.setSubtitle(getCurrentRef());
         invalidateFragments();
     }
@@ -239,7 +244,7 @@ public class RepositoryActivity extends BaseFragmentPagerActivity implements
         clearRefDependentFragments();
         setContentShown(false);
         invalidateTabs();
-        loadRepository(true);
+        loadRepository();
         super.onRefresh();
     }
 
@@ -284,6 +289,11 @@ public class RepositoryActivity extends BaseFragmentPagerActivity implements
     }
 
     @Override
+    public boolean displayDetachAction() {
+        return true;
+    }
+
+    @Override
     public boolean onOptionsItemSelected(MenuItem item) {
         Uri url = IntentUtils.createBaseUriForRepo(mRepoOwner, mRepoName).build();
         switch (item.getItemId()) {
@@ -310,11 +320,16 @@ public class RepositoryActivity extends BaseFragmentPagerActivity implements
                             BookmarksProvider.Columns.TYPE_REPO, bookmarkUrl, getCurrentRef(), true);
                 }
                 return true;
-            case R.id.zip_download:
-                String zipUrl = url + "/archive/" + getCurrentRef() + ".zip";
-                UiUtils.enqueueDownloadWithPermissionCheck(this, zipUrl, "application/zip",
-                        mRepoName + "-" + getCurrentRef() + ".zip", null, null);
+            case R.id.zip_download: {
+                final String zipUrl = Uri.parse(mRepository.url())
+                        .buildUpon()
+                        .appendPath("zipball")
+                        .appendPath(getCurrentRef())
+                        .toString();
+                DownloadUtils.enqueueDownloadWithPermissionCheck(this, zipUrl, "application/zip",
+                        mRepoName + "-" + getCurrentRef() + ".zip", null);
                 return true;
+            }
         }
         return super.onOptionsItemSelected(item);
     }
@@ -340,11 +355,14 @@ public class RepositoryActivity extends BaseFragmentPagerActivity implements
         mCommitListFragment = null;
     }
 
-    private void loadRepository(boolean force) {
-        RepositoryService service = ServiceFactory.get(RepositoryService.class, force);
+    private void loadRepository() {
+        // We always skip the cache in this case, since the repository endpoint incorrectly returns the
+        // same ETag even if some fields are changed (like the open issues count and the watchers count)
+        boolean skipCache = true;
+        RepositoryService service = ServiceFactory.get(RepositoryService.class, skipCache);
         service.getRepository(mRepoOwner, mRepoName)
                 .map(ApiHelpers::throwOnFailure)
-                .compose(makeLoaderSingle(ID_LOADER_REPO, force))
+                .compose(makeLoaderSingle(ID_LOADER_REPO, skipCache))
                 .subscribe(result -> {
                     mRepository = result;
                     updateTitle();
@@ -363,14 +381,15 @@ public class RepositoryActivity extends BaseFragmentPagerActivity implements
         if (mBranches != null) {
             showRefSelectionDialog();
         } else {
-            final RepositoryBranchService branchService =
-                    ServiceFactory.get(RepositoryBranchService.class, false);
-            final RepositoryService repoService = ServiceFactory.get(RepositoryService.class, false);
+            var branchService = ServiceFactory.getForFullPagedLists(RepositoryBranchService.class, false);
+            var repoService = ServiceFactory.getForFullPagedLists(RepositoryService.class, false);
 
             Single<List<Branch>> branchSingle = ApiHelpers.PageIterator
-                    .toSingle(page -> branchService.getBranches(mRepoOwner, mRepoName, page));
+                    .toSingle(page -> branchService.getBranches(mRepoOwner, mRepoName, page))
+                    .subscribeOn(Schedulers.io());
             Single<List<Branch>> tagSingle = ApiHelpers.PageIterator
-                    .toSingle(page -> repoService.getTags(mRepoOwner, mRepoName, page));
+                    .toSingle(page -> repoService.getTags(mRepoOwner, mRepoName, page))
+                    .subscribeOn(Schedulers.io());
 
             registerTemporarySubscription(Single.zip(branchSingle, tagSingle, Pair::create)
                     .compose(RxUtils::doInBackground)

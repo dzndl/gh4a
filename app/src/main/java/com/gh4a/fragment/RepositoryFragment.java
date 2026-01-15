@@ -18,9 +18,9 @@ package com.gh4a.fragment;
 import android.content.Context;
 import android.content.Intent;
 import android.graphics.Typeface;
+import android.net.Uri;
 import android.os.Bundle;
 import androidx.annotation.NonNull;
-import androidx.loader.app.LoaderManager;
 import android.text.SpannableString;
 import android.text.SpannableStringBuilder;
 import android.text.Spanned;
@@ -46,7 +46,7 @@ import com.gh4a.activities.WikiListActivity;
 import com.gh4a.utils.ApiHelpers;
 import com.gh4a.utils.HtmlUtils;
 import com.gh4a.utils.HttpImageGetter;
-import com.gh4a.utils.Optional;
+import com.gh4a.utils.IntentUtils;
 import com.gh4a.utils.RxUtils;
 import com.gh4a.utils.StringUtils;
 import com.gh4a.utils.UiUtils;
@@ -65,12 +65,13 @@ import com.vdurmont.emoji.EmojiParser;
 
 import java.net.HttpURLConnection;
 import java.util.Locale;
+import java.util.Optional;
 
 import io.reactivex.Single;
 import retrofit2.Response;
 
 public class RepositoryFragment extends LoadingFragmentBase implements
-        OverviewRow.OnIconClickListener, View.OnClickListener {
+        OverviewRow.OnIconClickListener {
     public static RepositoryFragment newInstance(Repository repository, String ref) {
         RepositoryFragment f = new RepositoryFragment();
 
@@ -161,8 +162,8 @@ public class RepositoryFragment extends LoadingFragmentBase implements
     }
 
     @Override
-    public void onActivityCreated(Bundle savedInstanceState) {
-        super.onActivityCreated(savedInstanceState);
+    public void onViewCreated(View view, Bundle savedInstanceState) {
+        super.onViewCreated(view, savedInstanceState);
 
         mImageGetter = new HttpImageGetter(getActivity());
         fillData();
@@ -173,7 +174,6 @@ public class RepositoryFragment extends LoadingFragmentBase implements
             mIsReadmeLoaded = savedInstanceState.getBoolean(STATE_KEY_IS_README_LOADED, false);
         }
 
-        LoaderManager lm = getLoaderManager();
         if (mIsReadmeExpanded || mIsReadmeLoaded) {
             loadReadme(false);
         }
@@ -285,15 +285,14 @@ public class RepositoryFragment extends LoadingFragmentBase implements
             updateStargazerUi();
         }
 
-        mContentView.findViewById(R.id.tv_contributors_label).setOnClickListener(this);
-        mContentView.findViewById(R.id.other_info).setOnClickListener(this);
-        mContentView.findViewById(R.id.tv_releases_label).setOnClickListener(this);
-        mReadmeTitleView.setOnClickListener(this);
+        mReadmeTitleView.setOnClickListener(view -> toggleReadmeExpanded());
+        mContentView.findViewById(R.id.tv_contributors_label).setOnClickListener(this::onOtherInfoLabelClick);
+        mContentView.findViewById(R.id.tv_releases_label).setOnClickListener(this::onOtherInfoLabelClick);
 
         Permissions permissions = mRepository.permissions();
-        updateClickableLabel(R.id.tv_collaborators_label,
-                permissions != null && permissions.push());
+        updateClickableLabel(R.id.tv_collaborators_label, permissions != null && permissions.push());
         updateClickableLabel(R.id.tv_wiki_label, mRepository.hasWiki());
+        updateClickableLabel(R.id.tv_discussions_label, mRepository.hasDiscussions());
     }
 
     @NonNull
@@ -308,7 +307,7 @@ public class RepositoryFragment extends LoadingFragmentBase implements
     private void updateClickableLabel(int id, boolean enable) {
         View view = mContentView.findViewById(id);
         if (enable) {
-            view.setOnClickListener(this);
+            view.setOnClickListener(this::onOtherInfoLabelClick);
             view.setVisibility(View.VISIBLE);
         } else {
             view.setVisibility(View.GONE);
@@ -342,12 +341,11 @@ public class RepositoryFragment extends LoadingFragmentBase implements
         mWatcherRow.setToggleState(mIsWatching != null && mIsWatching);
     }
 
-    @Override
-    public void onClick(View view) {
+    private void onOtherInfoLabelClick(View view) {
         int id = view.getId();
 
-        if (id == R.id.readme_title) {
-            toggleReadmeExpanded();
+        if (id == R.id.tv_discussions_label) {
+            IntentUtils.openInCustomTabOrBrowser(getActivity(), Uri.parse(mRepository.htmlUrl() + "/discussions"));
             return;
         }
 
@@ -363,8 +361,6 @@ public class RepositoryFragment extends LoadingFragmentBase implements
             intent = WikiListActivity.makeIntent(getActivity(), owner, name, null);
         } else if (id == R.id.tv_releases_label) {
             intent = ReleaseListActivity.makeIntent(getActivity(), owner, name);
-        } else if (view.getTag() instanceof Repository) {
-            intent = RepositoryActivity.makeIntent(getActivity(), (Repository) view.getTag());
         }
 
         if (intent != null) {
@@ -413,15 +409,15 @@ public class RepositoryFragment extends LoadingFragmentBase implements
         service.getReadmeHtml(repoOwner, repoName, mRef)
                 .map(ApiHelpers::throwOnFailure)
                 .map(Optional::of)
-                .compose(RxUtils.mapFailureToValue(HttpURLConnection.HTTP_NOT_FOUND, Optional.<String>absent()))
+                .compose(RxUtils.mapFailureToValue(HttpURLConnection.HTTP_NOT_FOUND, Optional.<String>empty()))
                 .map(htmlOpt -> {
                     if (htmlOpt.isPresent()) {
                         String html = HtmlUtils.rewriteRelativeUrls(htmlOpt.get(),
-                                repoOwner, repoName, mRef != null ? mRef : mRepository.defaultBranch());
+                                repoOwner, repoName, mRef != null ? mRef : mRepository.defaultBranch(), "");
                         mImageGetter.encode(context, id, html);
                         return Optional.of(html);
                     }
-                    return Optional.<String>absent();
+                    return Optional.<String>empty();
                 })
                 .compose(makeLoaderSingle(ID_LOADER_README, force))
                 .doOnSubscribe(disposable -> {
@@ -441,7 +437,7 @@ public class RepositoryFragment extends LoadingFragmentBase implements
     }
 
     private void loadPullRequestCount(boolean force) {
-        SearchService service = ServiceFactory.get(SearchService.class, force, null, null, 1);
+        SearchService service = ServiceFactory.get(SearchService.class, force, 1);
         String query = String.format(Locale.US, "type:pr repo:%s/%s state:open",
                 mRepository.owner().login(), mRepository.name());
 
@@ -450,13 +446,14 @@ public class RepositoryFragment extends LoadingFragmentBase implements
                 .map(SearchPage::totalCount)
                 .compose(makeLoaderSingle(ID_LOADER_PULL_REQUEST_COUNT, force))
                 .subscribe(count -> {
-                    int issueCount = mRepository.openIssuesCount() - count;
+                    int totalCount = count.intValue();
+                    int issueCount = mRepository.openIssuesCount() - totalCount;
 
                     OverviewRow issuesRow = mContentView.findViewById(R.id.issues_row);
                     issuesRow.setText(getResources().getQuantityString(R.plurals.issue, issueCount, issueCount));
 
                     OverviewRow pullsRow = mContentView.findViewById(R.id.pulls_row);
-                    pullsRow.setText(getResources().getQuantityString(R.plurals.pull_request, count, count));
+                    pullsRow.setText(getResources().getQuantityString(R.plurals.pull_request, totalCount, totalCount));
                 }, this::handleLoadFailure);
     }
 
@@ -485,23 +482,25 @@ public class RepositoryFragment extends LoadingFragmentBase implements
     private void toggleWatchingState() {
         WatchingService service = ServiceFactory.get(WatchingService.class, false);
         final String repoOwner = mRepository.owner().login(), repoName = mRepository.name();
-        final Single<?> responseSingle;
+        final Single<Boolean> responseSingle;
 
         if (mIsWatching) {
             responseSingle = service.deleteRepositorySubscription(repoOwner, repoName)
-                    .map(ApiHelpers::throwOnFailure);
+                    .map(ApiHelpers::mapToBooleanOrThrowOnFailure)
+                    .map(result -> false);
         } else {
             SubscriptionRequest request = SubscriptionRequest.builder()
                     .subscribed(true)
                     .build();
             responseSingle = service.setRepositorySubscription(repoOwner, repoName, request)
-                    .map(ApiHelpers::throwOnFailure);
+                    .map(ApiHelpers::throwOnFailure)
+                    .map(sub -> sub.subscribed());
         }
 
         responseSingle.compose(RxUtils::doInBackground)
                 .subscribe(result -> {
                     if (mIsWatching != null) {
-                        mIsWatching = !mIsWatching;
+                        mIsWatching = result;
                         mRepository = mRepository.toBuilder()
                                 .subscribersCount(mRepository.subscribersCount() + (mIsWatching ? 1 : -1))
                                 .build();
@@ -520,10 +519,7 @@ public class RepositoryFragment extends LoadingFragmentBase implements
         }
         StarringService service = ServiceFactory.get(StarringService.class, force);
         service.checkIfRepositoryIsStarred(mRepository.owner().login(), mRepository.name())
-                // success response means 'starred'
-                .map(ApiHelpers::mapToTrueOnSuccess)
-                // 404 means 'not starred'
-                .compose(RxUtils.mapFailureToValue(HttpURLConnection.HTTP_NOT_FOUND, false))
+                .map(ApiHelpers::mapToBooleanOrThrowOnFailure)
                 .compose(makeLoaderSingle(ID_LOADER_STARRING, force))
                 .subscribe(result -> {
                     mIsStarring = result;

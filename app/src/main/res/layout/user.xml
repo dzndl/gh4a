@@ -39,7 +39,7 @@
                         android:background="?attr/selectableItemBackgroundBorderless"
                         tools:src="@drawable/default_avatar" />
 
-                    <com.gh4a.widget.StyleableTextView
+                    <com.gh4a.widget.LinkHandlingTextView
                         android:id="@+id/tv_name"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
@@ -48,7 +48,7 @@
                         android:textAppearance="@style/TextAppearance.HeaderTitle"
                         tools:text="Username" />
 
-                    <com.gh4a.widget.StyleableTextView
+                    <com.gh4a.widget.LinkHandlingTextView
                         android:id="@+id/tv_email"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
@@ -58,9 +58,10 @@
                         android:autoLink="email"
                         android:textAppearance="?android:attr/textAppearanceSmall"
                         android:textColorLink="?android:attr/textColorLink"
+                        app:needsLinkHandling="true"
                         tools:text='user@email.com' />
 
-                    <com.gh4a.widget.StyleableTextView
+                    <com.gh4a.widget.LinkHandlingTextView
                         android:id="@+id/tv_website"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
@@ -70,19 +71,22 @@
                         android:autoLink="web"
                         android:textAppearance="?android:attr/textAppearanceSmall"
                         android:textColorLink="?android:attr/textColorLink"
+                        app:needsLinkHandling="true"
                         tools:text="https://example.com" />
 
-                    <com.gh4a.widget.StyleableTextView
+                    <com.gh4a.widget.LinkHandlingTextView
                         android:id="@+id/tv_company"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_below="@id/tv_website"
                         android:layout_marginTop="2dp"
                         android:layout_toRightOf="@id/iv_gravatar"
+                        android:autoLink="web"
                         android:textAppearance="?android:attr/textAppearanceSmall"
+                        app:needsLinkHandling="true"
                         tools:text="Company name" />
 
-                    <com.gh4a.widget.StyleableTextView
+                    <com.gh4a.widget.LinkHandlingTextView
                         android:id="@+id/tv_location"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
@@ -93,6 +97,24 @@
                         android:textAppearance="?android:attr/textAppearanceSmall"
                         tools:text="Location" />
                 </RelativeLayout>
+
+                <com.gh4a.widget.LinkHandlingTextView
+                    android:id="@+id/tv_bio"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="@dimen/overview_item_spacing"
+                    android:paddingLeft="@dimen/content_padding"
+                    android:paddingRight="@dimen/content_padding"
+                    android:autoLink="web"
+                    android:textAppearance="?android:attr/textAppearanceSmall"
+                    app:needsLinkHandling="true"
+                    tools:text="Bio of the user" />
+
+                <com.gh4a.widget.OverviewRow
+                    android:id="@+id/type_row"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:visibility="gone" />
 
                 <com.gh4a.widget.OverviewRow
                     android:id="@+id/join_date_row"
@@ -151,7 +173,7 @@
                 android:layout_marginBottom="@dimen/overview_header_spacing"
                 android:orientation="vertical">
 
-                <com.gh4a.widget.StyleableTextView
+                <TextView
                     android:id="@+id/tv_pub_repos_label"
                     style="@style/HeaderLabel"
                     android:layout_width="match_parent"
@@ -169,7 +191,7 @@
                     android:orientation="vertical"
                     android:visibility="gone" />
 
-                <com.gh4a.widget.StyleableTextView
+                <TextView
                     android:id="@+id/btn_repos"
                     style="@style/MoreButton"
                     android:layout_width="match_parent"
@@ -195,7 +217,7 @@
                 android:layout_height="wrap_content"
                 android:orientation="vertical">
 
-                <com.gh4a.widget.StyleableTextView
+                <TextView
                     android:id="@+id/tv_orgs"
                     style="@style/HeaderLabel"
                     android:layout_width="match_parent"

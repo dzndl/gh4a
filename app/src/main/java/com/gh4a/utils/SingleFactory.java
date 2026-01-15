@@ -57,8 +57,7 @@ public class SingleFactory {
 
     public static Single<NotificationListLoadResult> getNotifications(boolean all,
             boolean participating, boolean bypassCache) {
-        final NotificationService service =
-                ServiceFactory.get(NotificationService.class, bypassCache);
+        var service = ServiceFactory.getForFullPagedLists(NotificationService.class, bypassCache);
         final Map<String, Object> options = new HashMap<>();
         options.put("all", all);
         options.put("participating", participating);
@@ -83,15 +82,15 @@ public class SingleFactory {
 
         // sort each group by updatedAt
         for (ArrayList<NotificationThread> list : notificationsByRepo.values()) {
-            Collections.sort(list, (lhs, rhs) -> rhs.updatedAt().compareTo(lhs.updatedAt()));
+            Collections.sort(list, SingleFactory::compareNotificationsByUpdateDate);
         }
 
         // sort groups by updatedAt of top notification
         ArrayList<Repository> reposByTimestamp = new ArrayList<>(notificationsByRepo.keySet());
-        Collections.sort(reposByTimestamp, (lhs, rhs) -> {
-            NotificationThread lhsNotification = notificationsByRepo.get(lhs).get(0);
-            NotificationThread rhsNotification = notificationsByRepo.get(rhs).get(0);
-            return rhsNotification.updatedAt().compareTo(lhsNotification.updatedAt());
+        Collections.sort(reposByTimestamp, (lhsRepo, rhsRepo) -> {
+            NotificationThread lhsNotification = notificationsByRepo.get(lhsRepo).get(0);
+            NotificationThread rhsNotification = notificationsByRepo.get(rhsRepo).get(0);
+            return compareNotificationsByUpdateDate(lhsNotification, rhsNotification);
         });
 
         // add to list
@@ -115,6 +114,19 @@ public class SingleFactory {
         }
 
         return new NotificationListLoadResult(result);
+    }
+
+    private static int compareNotificationsByUpdateDate(NotificationThread lhs, NotificationThread rhs) {
+        if (lhs.updatedAt() == null && rhs.updatedAt() == null) {
+            return 0;
+        }
+        if (lhs.updatedAt() == null) {
+            return 1;
+        }
+        if (rhs.updatedAt() == null) {
+            return -1;
+        }
+        return rhs.updatedAt().compareTo(lhs.updatedAt());
     }
 
     public static Single<List<Feed>> loadFeed(String relativeUrl) {

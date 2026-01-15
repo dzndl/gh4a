@@ -39,7 +39,6 @@ import com.gh4a.db.SuggestionsProvider;
 import com.gh4a.utils.ApiHelpers;
 import com.gh4a.utils.RxUtils;
 import com.gh4a.utils.StringUtils;
-import com.gh4a.utils.UiUtils;
 import com.meisolsson.githubsdk.model.Page;
 import com.meisolsson.githubsdk.model.Repository;
 import com.meisolsson.githubsdk.model.SearchCode;
@@ -152,8 +151,9 @@ public class SearchFragment extends PagedDataBaseFragment<Object> implements
     }
 
     @Override
-    protected boolean shouldDoInitialLoad() {
-        return getArguments().getBoolean("do_initial_load", true);
+    protected boolean shouldDoInitialLoad(Bundle savedInstanceState) {
+        return (savedInstanceState != null && mQuery != null) // always restore previous load results
+                || getArguments().getBoolean("do_initial_load", true);
     }
 
     @Override
@@ -245,7 +245,7 @@ public class SearchFragment extends PagedDataBaseFragment<Object> implements
                 }.start();
             } else {
                 mQuery = cursor.getString(1);
-                mSearch.setQuery(mQuery, false);
+                mSearch.setQuery(mQuery, true);
             }
         }
         return true;
@@ -333,7 +333,7 @@ public class SearchFragment extends PagedDataBaseFragment<Object> implements
     private Single<Response<Page<Object>>> makeUserSearchSingle(long page, boolean bypassCache) {
         final SearchService service = ServiceFactory.get(SearchService.class, bypassCache);
         return service.searchUsers(mQuery, null, null, page)
-                .compose(result -> RxUtils.<User, Object>searchPageAdapter(result, item -> item));
+                .compose(result -> RxUtils.searchPageAdapter(result, item -> item));
     }
 
     private Single<Response<Page<Object>>> makeCodeSearchSingle(long page, boolean bypassCache) {
@@ -341,7 +341,7 @@ public class SearchFragment extends PagedDataBaseFragment<Object> implements
                 "application/vnd.github.v3.text-match+json", null, null);
 
         return service.searchCode(mQuery, null, null, page)
-                .compose(result -> RxUtils.<SearchCode, Object>searchPageAdapter(result, item -> item));
+                .compose(result -> RxUtils.searchPageAdapter(result, item -> item));
     }
 
     private static class SearchTypeAdapter extends BaseAdapter implements SpinnerAdapter {
@@ -404,7 +404,7 @@ public class SearchFragment extends PagedDataBaseFragment<Object> implements
         }
     }
 
-    private static class SuggestionAdapter extends CursorAdapter {
+    private class SuggestionAdapter extends CursorAdapter {
         private final LayoutInflater mInflater;
 
         public SuggestionAdapter(Context context) {
@@ -444,9 +444,27 @@ public class SearchFragment extends PagedDataBaseFragment<Object> implements
 
         @Override
         public void bindView(View view, Context context, Cursor cursor) {
-            TextView textView = (TextView) view;
             int columnIndex = cursor.getColumnIndexOrThrow(SuggestionsProvider.Columns.SUGGESTION);
-            textView.setText(cursor.getString(columnIndex));
+            String suggestionText = cursor.getString(columnIndex);
+            if (isClearRow(cursor.getPosition())) {
+                bindClearSuggestionsRow(view, suggestionText);
+            } else {
+                bindSuggestionRow(view, suggestionText);
+            }
+        }
+
+        private void bindSuggestionRow(View view, String suggestionText) {
+            TextView textView = (TextView) view.findViewById(R.id.suggestion_text);
+            textView.setText(suggestionText);
+            view.findViewById(R.id.select_suggestion_button).setOnClickListener(btn -> {
+                mQuery = suggestionText;
+                mSearch.setQuery(mQuery, false);
+            });
+        }
+
+        private void bindClearSuggestionsRow(View view, String suggestionText) {
+            TextView textView = (TextView) view;
+            textView.setText(suggestionText);
         }
 
         private boolean isClearRow(int position) {

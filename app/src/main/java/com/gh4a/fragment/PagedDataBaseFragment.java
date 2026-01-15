@@ -16,6 +16,8 @@
 package com.gh4a.fragment;
 
 import android.os.Bundle;
+
+import androidx.loader.app.LoaderManager;
 import androidx.recyclerview.widget.RecyclerView;
 import android.util.Pair;
 import android.view.LayoutInflater;
@@ -49,12 +51,12 @@ public abstract class PagedDataBaseFragment<T> extends LoadingListFragmentBase i
     private Disposable mSubscription;
 
     @Override
-    public void onActivityCreated(Bundle savedInstanceState) {
-        super.onActivityCreated(savedInstanceState);
+    public void onViewCreated(View view, Bundle savedInstanceState) {
+        super.onViewCreated(view, savedInstanceState);
 
-        mRxLoader = new RxLoader(getActivity(), getLoaderManager());
+        mRxLoader = new RxLoader(getActivity(), LoaderManager.getInstance(this));
         resetSubject();
-        if (shouldDoInitialLoad()) {
+        if (shouldDoInitialLoad(savedInstanceState)) {
             setContentShown(false);
             load(false);
         }
@@ -90,7 +92,7 @@ public abstract class PagedDataBaseFragment<T> extends LoadingListFragmentBase i
 
     @Override
     protected boolean hasDividers() {
-        return !mAdapter.isCardStyle();
+        return mAdapter.hasDividers() && !mAdapter.isCardStyle();
     }
 
     @Override
@@ -104,7 +106,7 @@ public abstract class PagedDataBaseFragment<T> extends LoadingListFragmentBase i
         mPageSubject.onNext(1);
     }
 
-    protected boolean shouldDoInitialLoad() {
+    protected boolean shouldDoInitialLoad(Bundle savedInstanceState) {
         return true;
     }
 
@@ -163,7 +165,16 @@ public abstract class PagedDataBaseFragment<T> extends LoadingListFragmentBase i
     @Override
     public void onScrolledToFooter() {
         if (mNextPage != null && mLoadingView.getVisibility() == View.VISIBLE) {
-            mPageSubject.onNext(mNextPage);
+            // Even if our subscription above is active, the page subject might not be subscribed
+            // to yet - this is the case if the data comes from the RX loader's cache. In that case,
+            // updating the page subject is pointless at this point. Force a load to subscribe to
+            // the page subject, which will cause the data to be delivered again, after which
+            // onScrolledToFooter will be called again.
+            if (mPageSubject.hasObservers()) {
+                mPageSubject.onNext(mNextPage);
+            } else {
+                load(true);
+            }
             mNextPage = null;
         }
     }

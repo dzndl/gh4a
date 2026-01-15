@@ -1,10 +1,12 @@
 package com.gh4a.fragment;
 
+import android.Manifest;
 import android.app.Dialog;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
+import android.os.Build;
 import android.os.Bundle;
 import androidx.annotation.NonNull;
 import androidx.fragment.app.DialogFragment;
@@ -24,6 +26,7 @@ import android.widget.TextView;
 import com.gh4a.Gh4Application;
 import com.gh4a.R;
 import com.gh4a.activities.IssueListActivity;
+import com.gh4a.activities.RepositoryActivity;
 import com.gh4a.worker.NotificationsWorker;
 import com.gh4a.widget.IntegerListPreference;
 
@@ -39,6 +42,7 @@ public class SettingsFragment extends PreferenceFragmentCompat implements
     public static final String KEY_START_PAGE = "start_page";
     public static final String KEY_TEXT_SIZE = "webview_initial_zoom";
     public static final String KEY_GIF_LOADING = "http_gif_load_mode";
+    public static final String KEY_CUSTOM_TABS = "use_custom_tabs";
     public static final String KEY_NOTIFICATIONS = "notifications";
     public static final String KEY_NOTIFICATION_INTERVAL = "notification_interval";
     private static final String KEY_ABOUT = "about";
@@ -64,13 +68,8 @@ public class SettingsFragment extends PreferenceFragmentCompat implements
     public void onCreatePreferences(Bundle savedInstanceState, String rootKey) {
         getPreferenceManager().setSharedPreferencesName(PREF_NAME);
         addPreferencesFromResource(R.xml.settings);
-    }
 
-    @Override
-    public void onActivityCreated(Bundle savedInstanceState) {
-        super.onActivityCreated(savedInstanceState);
-
-        mThemePref = (IntegerListPreference) findPreference(KEY_THEME);
+        mThemePref = findPreference(KEY_THEME);
         mThemePref.setOnPreferenceChangeListener(this);
 
         mAboutPref = findPreference(KEY_ABOUT);
@@ -80,11 +79,10 @@ public class SettingsFragment extends PreferenceFragmentCompat implements
         mOpenSourcePref = findPreference(KEY_OPEN_SOURCE_COMPONENTS);
         mOpenSourcePref.setOnPreferenceClickListener(this);
 
-        mNotificationsPref = (TwoStatePreference) findPreference(KEY_NOTIFICATIONS);
+        mNotificationsPref = findPreference(KEY_NOTIFICATIONS);
         mNotificationsPref.setOnPreferenceChangeListener(this);
 
-        mNotificationIntervalPref =
-                (IntegerListPreference) findPreference(KEY_NOTIFICATION_INTERVAL);
+        mNotificationIntervalPref = findPreference(KEY_NOTIFICATION_INTERVAL);
         mNotificationIntervalPref.setOnPreferenceChangeListener(this);
     }
 
@@ -99,6 +97,11 @@ public class SettingsFragment extends PreferenceFragmentCompat implements
                 NotificationsWorker.createNotificationChannels(getActivity());
                 NotificationsWorker.schedule(getContext(),
                         Integer.valueOf(mNotificationIntervalPref.getValue()));
+                // On Android 13 and up, notification permissions must be granted manually
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                        getActivity().checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                    getActivity().requestPermissions(new String[] { Manifest.permission.POST_NOTIFICATIONS }, 0);
+                }
             } else {
                 NotificationsWorker.cancel(getContext());
             }
@@ -181,6 +184,8 @@ public class SettingsFragment extends PreferenceFragmentCompat implements
             } else {
                 newIssueButton.setVisibility(View.GONE);
             }
+
+            findViewById(R.id.btn_gh4a).setOnClickListener(this);
         }
 
         @Override
@@ -200,6 +205,11 @@ public class SettingsFragment extends PreferenceFragmentCompat implements
                 context.startActivity(chooserIntent);
             } else if (id == R.id.btn_by_gh4a) {
                 Intent intent = IssueListActivity.makeIntent(context,
+                        context.getString(R.string.my_username),
+                        context.getString(R.string.my_repo));
+                context.startActivity(intent);
+            } else if (id == R.id.btn_gh4a) {
+                Intent intent = RepositoryActivity.makeIntent(context,
                         context.getString(R.string.my_username),
                         context.getString(R.string.my_repo));
                 context.startActivity(intent);
@@ -227,8 +237,8 @@ public class SettingsFragment extends PreferenceFragmentCompat implements
     private static class OpenSourceComponentAdapter extends RecyclerView.Adapter<OpenSourceComponentViewHolder> {
         private static final String[][] COMPONENTS = new String[][] {
             { "android-gif-drawable", "https://github.com/koral--/android-gif-drawable" },
-            { "Android-Job", "https://github.com/evernote/android-job" },
             { "AndroidSVG", "https://github.com/BigBadaboom/androidsvg" },
+            { "AndroidX", "https://github.com/androidx/androidx" },
             { "emoji-java", "https://github.com/vdurmont/emoji-java" },
             { "GitHubSdk", "https://github.com/maniac103/GitHubSdk" },
             { "HoloColorPicker", "https://github.com/LarsWerkman/HoloColorPicker" },

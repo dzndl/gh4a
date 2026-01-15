@@ -16,7 +16,8 @@
 package com.gh4a.model;
 
 import android.net.Uri;
-import androidx.annotation.Nullable;
+import android.os.Parcel;
+import android.os.Parcelable;
 
 import com.gh4a.utils.StringUtils;
 
@@ -28,8 +29,10 @@ import org.simpleframework.xml.core.Commit;
 
 import java.util.Date;
 
+import androidx.annotation.Nullable;
+
 @Root(name = "entry", strict = false)
-public class Feed {
+public class Feed implements Parcelable {
     @Element(name = "id")
     private String id;
 
@@ -70,6 +73,8 @@ public class Feed {
         preview = generatePreview(content);
         if (StringUtils.isBlank(title)) {
             title = getTitleFromUrl(link);
+        } else {
+            title = StringUtils.unescapeCommonHtmlEntities(title);
         }
     }
 
@@ -78,7 +83,7 @@ public class Feed {
             return null;
         }
         String preview = content.length() > 2000 ? content.substring(0, 2000) : content;
-        preview = preview.replaceAll("<(.|\n)*?>", "").trim();
+        preview = StringUtils.unescapeCommonHtmlEntities(preview.replaceAll("<(.|\n)*?>", "")).trim();
         if (preview.length() > 500) {
             preview = preview.substring(0, 500);
         }
@@ -111,7 +116,7 @@ public class Feed {
         if (url == null) {
             return null;
         }
-        return url.substring(url.lastIndexOf("/") + 1, url.length()).replaceAll("-", " ");
+        return url.substring(url.lastIndexOf("/") + 1).replaceAll("-", " ");
     }
 
     public String getId() {
@@ -157,4 +162,42 @@ public class Feed {
     public Date getUpdated() {
         return updated;
     }
+
+    @Override
+    public void writeToParcel(Parcel dest, int flags) {
+        dest.writeString(id);
+        dest.writeString(link);
+        dest.writeString(title);
+        dest.writeString(content);
+        dest.writeString(author);
+        dest.writeString(avatarUrl);
+        dest.writeInt(userId);
+        dest.writeString(preview);
+    }
+
+    @Override
+    public int describeContents() {
+        return 0;
+    }
+
+    public static final Creator<Feed> CREATOR = new Creator<Feed>() {
+        @Override
+        public Feed createFromParcel(Parcel in) {
+            Feed feed = new Feed();
+            feed.id = in.readString();
+            feed.link = in.readString();
+            feed.title = in.readString();
+            feed.content = in.readString();
+            feed.author = in.readString();
+            feed.avatarUrl = in.readString();
+            feed.userId = in.readInt();
+            feed.preview = in.readString();
+            return feed;
+        }
+
+        @Override
+        public Feed[] newArray(int size) {
+            return new Feed[size];
+        }
+    };
 }

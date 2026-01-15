@@ -12,6 +12,7 @@ import android.widget.TextView;
 
 import com.gh4a.R;
 import com.gh4a.fragment.SearchFragment;
+import com.gh4a.utils.ApiHelpers;
 import com.meisolsson.githubsdk.model.Repository;
 import com.meisolsson.githubsdk.model.SearchCode;
 import com.meisolsson.githubsdk.model.TextMatch;
@@ -92,8 +93,8 @@ public class SearchAdapter extends RootAdapter<Object, RecyclerView.ViewHolder> 
         @Override
         public void onBindViewHolder(ViewHolder holder, SearchCode result) {
             Repository repo = result.repository();
-            holder.tvTitle.setText(result.name());
-            holder.tvRepo.setText(repo.owner().login() + "/" + repo.name());
+            holder.tvTitle.setText(result.path());
+            holder.tvRepo.setText(ApiHelpers.formatRepoName(mContext, repo));
 
             List<TextMatch> matches = result.textMatches();
             if (matches != null && !matches.isEmpty()) {
@@ -108,7 +109,10 @@ public class SearchAdapter extends RootAdapter<Object, RecyclerView.ViewHolder> 
                         for (TextMatch.MatchItem item : items) {
                             int start = item.getStartPos();
                             int end = item.getEndPos();
-                            if (start >= 0 && end > start) {
+                            // GH API returns incorrect indices for match items when the code snippet contains multi-byte characters.
+                            // We want to make sure we don't crash when those indices fall outside the text length.
+                            boolean isInsideTextRange = start < builder.length() && end < builder.length();
+                            if (start >= 0 && end > start && isInsideTextRange) {
                                 builder.setSpan(new StyleSpan(Typeface.BOLD), start, end, 0);
                             }
                         }
@@ -126,6 +130,7 @@ public class SearchAdapter extends RootAdapter<Object, RecyclerView.ViewHolder> 
                     tvMatch.setText(builder);
                     tvMatch.setTag(result);
                     tvMatch.setTag(R.id.search_match_index, i);
+                    tvMatch.setTypeface(Typeface.MONOSPACE);
                     row.setVisibility(View.VISIBLE);
                 }
                 for (int i = matches.size(); i < holder.matchesContainer.getChildCount(); i++) {

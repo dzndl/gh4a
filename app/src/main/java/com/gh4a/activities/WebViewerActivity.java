@@ -17,23 +17,18 @@ package com.gh4a.activities;
 
 import android.annotation.SuppressLint;
 import android.annotation.TargetApi;
-import android.content.ActivityNotFoundException;
 import android.content.Context;
-import android.content.Intent;
 import android.content.SharedPreferences;
-import android.content.pm.ApplicationInfo;
 import android.content.res.AssetManager;
-import android.content.res.Configuration;
+import android.graphics.Color;
 import android.graphics.Point;
 import android.net.Uri;
-import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.print.PrintAttributes;
 import android.print.PrintDocumentAdapter;
 import android.print.PrintManager;
 import android.text.TextUtils;
-import android.view.LayoutInflater;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.MotionEvent;
@@ -45,17 +40,21 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 
 import com.gh4a.BaseActivity;
+import com.gh4a.BuildConfig;
 import com.gh4a.R;
 import com.gh4a.fragment.SettingsFragment;
 import com.gh4a.utils.FileUtils;
+import com.gh4a.utils.HtmlUtils;
+import com.gh4a.utils.IntentUtils;
+import com.gh4a.utils.StringUtils;
 import com.gh4a.utils.UiUtils;
+import com.gh4a.widget.FindActionModeCallback;
 import com.gh4a.widget.SwipeRefreshLayout;
 
 import java.io.IOException;
 import java.util.ArrayList;
 
-import androidx.appcompat.view.ContextThemeWrapper;
-
+@SuppressLint("AddJavascriptInterface")
 public abstract class WebViewerActivity extends BaseActivity implements
         SwipeRefreshLayout.ChildScrollDelegate, View.OnTouchListener {
 
@@ -65,7 +64,7 @@ public abstract class WebViewerActivity extends BaseActivity implements
     private WebView mPrintWebView;
     private boolean mStarted;
     private boolean mHasData;
-    private boolean mRequiresJsInterface;
+    private boolean mRequiresNativeClient;
     private boolean mPageFinished;
     private boolean mRenderingDone;
     private final Handler mHandler = new Handler();
@@ -75,10 +74,7 @@ public abstract class WebViewerActivity extends BaseActivity implements
     public static final String PRINT_CSS_THEME = "print";
 
     private static final ArrayList<String> sLanguagePlugins = new ArrayList<>();
-
-    private final int[] ZOOM_SIZES = new int[] {
-        50, 75, 100, 150, 200
-    };
+    private static final int[] ZOOM_SIZES = { 50, 75, 100, 150, 200 };
 
     private final WebViewClient mWebViewClient = new WebViewClient() {
         @Override
@@ -97,7 +93,6 @@ public abstract class WebViewerActivity extends BaseActivity implements
         }
 
         @Override
-        @SuppressWarnings("deprecation")
         public boolean shouldOverrideUrlLoading(WebView view, String url) {
             if (mStarted) {
                 handleUrlLoad(Uri.parse(url));
@@ -110,21 +105,11 @@ public abstract class WebViewerActivity extends BaseActivity implements
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
-            if ((getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) != 0) {
-                WebView.setWebContentsDebuggingEnabled(true);
-            }
+        if (BuildConfig.DEBUG) {
+            WebView.setWebContentsDebuggingEnabled(true);
         }
 
-        // We also use the dark CAB for the light theme, so we have to force the
-        // dark (night) version of the theme for inflating the WebView
-        ContextThemeWrapper inflateContext = new ContextThemeWrapper(this, R.style.AppTheme);
-        Configuration config = new Configuration();
-        config.fontScale = 0F;
-        config.uiMode = Configuration.UI_MODE_NIGHT_YES | (config.uiMode & ~Configuration.UI_MODE_NIGHT_MASK);
-        inflateContext.applyOverrideConfiguration(config);
-
-        setContentView(LayoutInflater.from(inflateContext).inflate(R.layout.web_viewer, null));
+        setContentView(R.layout.web_viewer);
 
         setContentShown(false);
         setupWebView();
@@ -158,6 +143,7 @@ public abstract class WebViewerActivity extends BaseActivity implements
 
         WebSettings s = mWebView.getSettings();
         initWebViewSettings(s);
+        addCommonJavascriptInterfaces(mWebView);
 
         SharedPreferences prefs = getSharedPreferences(SettingsFragment.PREF_NAME, MODE_PRIVATE);
         int initialZoomLevel = prefs.getInt(SettingsFragment.KEY_TEXT_SIZE, 2);
@@ -165,36 +151,37 @@ public abstract class WebViewerActivity extends BaseActivity implements
             s.setTextZoom(ZOOM_SIZES[initialZoomLevel]);
         }
 
-        mWebView.setBackgroundColor(UiUtils.resolveColor(this, R.attr.colorWebViewBackground));
+        mWebView.setBackgroundColor(Color.TRANSPARENT);
         mWebView.setWebViewClient(mWebViewClient);
-
         mWebView.setOnTouchListener(this);
     }
 
-    @SuppressWarnings("deprecation")
     @SuppressLint("SetJavaScriptEnabled")
     private void initWebViewSettings(WebSettings s) {
         s.setLayoutAlgorithm(WebSettings.LayoutAlgorithm.NORMAL);
-        s.setAllowFileAccess(true);
+        s.setAllowFileAccess(false);
         s.setBuiltInZoomControls(true);
         s.setDisplayZoomControls(false);
-        s.setLightTouchEnabled(true);
         s.setLoadsImagesAutomatically(true);
         s.setSupportZoom(true);
         s.setJavaScriptEnabled(true);
         s.setUseWideViewPort(false);
     }
 
+    private void addCommonJavascriptInterfaces(WebView webView) {
+        webView.addJavascriptInterface(new Base64JavascriptInterface(), "Base64");
+        webView.addJavascriptInterface(new HtmlUtilsJavascriptInterface(), "HtmlUtils");
+    }
+
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
-        if (!mHasData) {
-            menu.removeItem(R.id.browser);
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT && mHasData) {
+        if (mHasData) {
             getMenuInflater().inflate(R.menu.print_menu, menu);
             if (mPrintWebView != null) {
                 menu.findItem(R.id.print).setEnabled(false);
             }
+        } else {
+            menu.removeItem(R.id.browser);
         }
         return super.onCreateOptionsMenu(menu);
     }
@@ -237,16 +224,16 @@ public abstract class WebViewerActivity extends BaseActivity implements
         return false;
     }
 
-    @SuppressWarnings("deprecation")
-    @TargetApi(11)
     private void doSearch() {
-        if (mWebView != null) {
-            mWebView.showFindDialog(null, true);
+        if (mWebView == null) {
+            return;
         }
+        FindActionModeCallback findAction = new FindActionModeCallback(mWebView.getContext());
+        startSupportActionMode(findAction);
+        findAction.setWebView(mWebView);
+        findAction.showSoftInput();
     }
 
-    @SuppressLint("AddJavascriptInterface")
-    @TargetApi(19)
     private void doPrint() {
         if (handlePrintRequest()) {
             return;
@@ -254,9 +241,10 @@ public abstract class WebViewerActivity extends BaseActivity implements
 
         mPrintWebView = new WebView(this);
         initWebViewSettings(mPrintWebView.getSettings());
+        addCommonJavascriptInterfaces(mPrintWebView);
 
-        if (mRequiresJsInterface) {
-            mPrintWebView.addJavascriptInterface(new PrintJavascriptInterface(), "NativeClient");
+        if (mRequiresNativeClient) {
+            mPrintWebView.addJavascriptInterface(new PrintNativeClientJavascriptInterface(), "NativeClient");
         } else {
             mPrintWebView.setWebViewClient(new WebViewClient() {
                 @Override
@@ -270,26 +258,15 @@ public abstract class WebViewerActivity extends BaseActivity implements
         supportInvalidateOptionsMenu();
     }
 
-    @TargetApi(19)
     private void doPrintHtml() {
         if (!isFinishing()) {
             final String title = getDocumentTitle();
             PrintManager printManager = (PrintManager) getSystemService(Context.PRINT_SERVICE);
-            PrintDocumentAdapter printAdapter = getPrintAdapterForWebView(mPrintWebView, title);
+            PrintDocumentAdapter printAdapter = mPrintWebView.createPrintDocumentAdapter(title);
             printManager.print(title, printAdapter, new PrintAttributes.Builder().build());
         }
         mPrintWebView = null;
         supportInvalidateOptionsMenu();
-    }
-
-    @SuppressWarnings("deprecation")
-    @TargetApi(19)
-    private PrintDocumentAdapter getPrintAdapterForWebView(WebView webView, String title) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            return webView.createPrintDocumentAdapter(title);
-        } else {
-            return webView.createPrintDocumentAdapter();
-        }
     }
 
     @Override
@@ -304,7 +281,7 @@ public abstract class WebViewerActivity extends BaseActivity implements
     }
 
     private void showContentIfDone() {
-        if (mPageFinished && (mRenderingDone || !mRequiresJsInterface)) {
+        if (mPageFinished && (mRenderingDone || !mRequiresNativeClient)) {
             applyLineWrapping(shouldWrapLines());
             setContentShown(true);
         }
@@ -323,33 +300,18 @@ public abstract class WebViewerActivity extends BaseActivity implements
     }
 
     protected void handleUrlLoad(Uri uri) {
-        if ("file".equals(uri.getScheme())) {
-            // Opening that URL will trigger a FileUriExposedException in API 24+
-            return;
-        }
-        //noinspection TryWithIdenticalCatches
-        try {
-            Intent intent = new Intent(Intent.ACTION_VIEW, uri);
-            startActivity(intent);
-        } catch (ActivityNotFoundException e) {
-            // ignore
-        } catch (SecurityException e) {
-            // some apps (namely the Wikipedia one) have intent filters set
-            // for the VIEW action for internal, non-exported activities
-            // -> ignore
-        }
+        IntentUtils.openLinkInternallyOrExternally(this, uri);
     }
 
     protected void onLineTouched(int line, int x, int y) {
     }
 
-    @SuppressLint("AddJavascriptInterface")
     protected void onDataReady() {
         final String cssTheme = getResources().getBoolean(R.bool.is_dark_theme)
                 ? DARK_CSS_THEME : LIGHT_CSS_THEME;
         final String html = generateHtml(cssTheme, false);
-        if (mRequiresJsInterface) {
-            mWebView.addJavascriptInterface(new DisplayJavascriptInterface(), "NativeClient");
+        if (mRequiresNativeClient) {
+            mWebView.addJavascriptInterface(new NativeClientJavascriptInterface(), "NativeClient");
         }
         mWebView.loadDataWithBaseURL("file:///android_asset/", html, null, "utf-8", null);
         mHasData = true;
@@ -363,13 +325,11 @@ public abstract class WebViewerActivity extends BaseActivity implements
 
         AssetManager am = getAssets();
         try {
-            String[] files = am.list("");
-            for (String f : files) {
-                if (f.startsWith("lang-")) {
-                    int pos = f.lastIndexOf('.');
-                    if (pos > 0 && TextUtils.equals(f.substring(pos + 1), "js")) {
-                        sLanguagePlugins.add(f.substring(0, pos));
-                    }
+            String[] files = am.list("prettify-plugins");
+            for (String filename : files) {
+                if (filename.endsWith(".js")) {
+                    int dotPosition = filename.lastIndexOf('.');
+                    sLanguagePlugins.add("prettify-plugins/" + filename.substring(0, dotPosition));
                 }
             }
         } catch (IOException e) {
@@ -379,7 +339,7 @@ public abstract class WebViewerActivity extends BaseActivity implements
     }
 
     protected String generateMarkdownHtml(String base64Data,
-            String repoOwner, String repoName, String ref,
+            String repoOwner, String repoName, String ref, String folderPath,
             String cssTheme, boolean addTitleHeader) {
         String title = addTitleHeader ? getDocumentTitle() : null;
         StringBuilder content = new StringBuilder();
@@ -388,9 +348,8 @@ public abstract class WebViewerActivity extends BaseActivity implements
             content.append(title);
         }
         content.append("</title>");
-        writeScriptInclude(content, "showdown");
-        writeScriptInclude(content, "base64");
-        writeCssInclude(content, "markdown", cssTheme);
+        HtmlUtils.writeScriptInclude(content, "showdown");
+        HtmlUtils.writeCssInclude(content, "markdown", cssTheme);
         content.append("</head>");
 
         content.append("<body>");
@@ -405,27 +364,24 @@ public abstract class WebViewerActivity extends BaseActivity implements
         content.append("');\n");
         content.append("var converter = new showdown.Converter();\n");
         content.append("converter.setFlavor('github');\n");
-        if (repoOwner != null && repoName != null) {
-            String urlPrefix = "https://raw.github.com/"
-                    + repoOwner + "/" + repoName + "/" + (ref != null ? ref : "master");
-            content.append("converter.setOption('fixupRelativeUrls', true);\n");
-            content.append("converter.setOption('relativeUrlFixupPrefix','");
-            content.append(urlPrefix).append("');\n");
-        }
         content.append("var html = converter.makeHtml(text);\n");
+        if (repoOwner != null && repoName != null) {
+            String actualRef = ref == null ? "master" : ref;
+            content.append(String.format("html = HtmlUtils.rewriteRelativeUrls(html, '%s', '%s', '%s', '%s');\n",
+                    repoOwner, repoName, actualRef, folderPath));
+        }
         content.append("document.getElementById('content').innerHTML = html;");
         content.append("</script>");
 
         content.append("</body></html>");
 
-        mRequiresJsInterface = false;
+        mRequiresNativeClient = false;
         return content.toString();
     }
 
     protected String generateCodeHtml(String data, String fileName,
                 int highlightStart, int highlightEnd,
                 String cssTheme, boolean addTitleHeader) {
-        String ext = FileUtils.getFileExtension(fileName);
         String title = addTitleHeader ? getDocumentTitle() : null;
         StringBuilder content = new StringBuilder();
         content.append("<html><head><title>");
@@ -433,13 +389,13 @@ public abstract class WebViewerActivity extends BaseActivity implements
             content.append(title);
         }
         content.append("</title>");
-        writeScriptInclude(content, "codeutils");
+        HtmlUtils.writeScriptInclude(content, "codeutils");
 
-        writeCssInclude(content, "prettify", cssTheme);
-        writeScriptInclude(content, "prettify");
+        HtmlUtils.writeCssInclude(content, "prettify", cssTheme);
+        HtmlUtils.writeScriptInclude(content, "prettify");
         loadLanguagePluginListIfNeeded();
         for (String plugin : sLanguagePlugins) {
-            writeScriptInclude(content, plugin);
+            HtmlUtils.writeScriptInclude(content, plugin);
         }
         content.append("</head>");
         content.append("<body onload='prettyPrint(function() { highlightLines(");
@@ -450,37 +406,43 @@ public abstract class WebViewerActivity extends BaseActivity implements
             content.append("<h2>").append(title).append("</h2>");
         }
         content.append("<pre id='content' class='prettyprint linenums lang-");
-        content.append(ext).append("'>");
+        content.append(prettifyLanguageCodeFor(fileName, data)).append("'>");
 
         content.append(TextUtils.htmlEncode(data));
         content.append("</pre></body></html>");
 
-        mRequiresJsInterface = true;
+        mRequiresNativeClient = true;
         return content.toString();
     }
 
-    protected static String wrapUnthemedHtml(String html, String cssTheme, String title) {
-        String style = TextUtils.equals(cssTheme, DARK_CSS_THEME)
-                ? "<style type=\"text/css\">" +
-                    "body { color: #A3A3A5 !important }" +
-                    "a { color: #4183C4 !important }</style>"
-                : "";
-        String titleHeader = title != null ? "<h2>" + title + "</h2>" : "";
-        return style + "<body>" + titleHeader + html + "</body>";
+    private String prettifyLanguageCodeFor(String fileName, String fileContent) {
+        if (FileUtils.isMarkdown(fileName)) {
+            // Markdown files can have HTML code in them, so this is the best compromise we can do
+            // to overcome the absence of Markdown syntax highlighting in Prettify library
+            return "html";
+        }
+
+        String extension = FileUtils.getFileExtension(fileName);
+        if (!StringUtils.isBlank(extension)) {
+            return extension;
+        }
+
+        boolean hasShebangLine = fileContent.startsWith("#!");
+        return hasShebangLine
+                ? ""      // default prettify code highlighting
+                : "txt";  // plain text, no highlighting
     }
 
-    protected static void writeScriptInclude(StringBuilder builder, String scriptName) {
-        builder.append("<script src='file:///android_asset/");
-        builder.append(scriptName);
-        builder.append(".js' type='text/javascript'></script>");
-    }
-
-    protected static void writeCssInclude(StringBuilder builder, String cssType, String cssTheme) {
-        builder.append("<link href='file:///android_asset/");
-        builder.append(cssType);
-        builder.append("-");
-        builder.append(cssTheme);
-        builder.append(".css' rel='stylesheet' type='text/css'/>");
+    protected static String wrapWithMarkdownStyling(String html, String cssTheme, String title) {
+        StringBuilder content = new StringBuilder();
+        HtmlUtils.writeCssInclude(content, "markdown", cssTheme);
+        content.append("<body>");
+        if (title != null) {
+            content.append("<h2>").append(title).append("</h2>");
+        }
+        content.append(html);
+        content.append("</body>");
+        return content.toString();
     }
 
     @Override
@@ -492,8 +454,22 @@ public abstract class WebViewerActivity extends BaseActivity implements
     protected abstract String generateHtml(String cssTheme, boolean addTitleHeader);
     protected abstract String getDocumentTitle();
 
-    @SuppressWarnings("unused")
-    private class DisplayJavascriptInterface {
+    private static class Base64JavascriptInterface {
+        @JavascriptInterface
+        public String decode(String base64) {
+            return StringUtils.fromBase64(base64);
+        }
+    }
+
+    private static class HtmlUtilsJavascriptInterface {
+        @JavascriptInterface
+        public String rewriteRelativeUrls(final String html, final String repoUser,
+                final String repoName, final String branch, final String folderPath) {
+            return HtmlUtils.rewriteRelativeUrls(html, repoUser, repoName, branch, folderPath);
+        }
+    }
+
+    private class NativeClientJavascriptInterface {
         @JavascriptInterface
         public void onLineTouched(final int line) {
             mHandler.post(() -> WebViewerActivity.this.onLineTouched(line, mLastTouchDown.x, mLastTouchDown.y));
@@ -508,8 +484,7 @@ public abstract class WebViewerActivity extends BaseActivity implements
         }
     }
 
-    @SuppressWarnings("unused")
-    private class PrintJavascriptInterface {
+    private class PrintNativeClientJavascriptInterface {
         @JavascriptInterface
         public void onLineTouched(int line) {
         }

@@ -2,15 +2,13 @@ package com.gh4a.model;
 
 import android.content.Context;
 import android.content.Intent;
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 
 import com.gh4a.activities.PullRequestDiffViewerActivity;
 import com.gh4a.utils.IntentUtils;
-import com.meisolsson.githubsdk.model.GitHubComment;
 import com.meisolsson.githubsdk.model.GitHubCommentBase;
 import com.meisolsson.githubsdk.model.GitHubFile;
 import com.meisolsson.githubsdk.model.IssueEvent;
+import com.meisolsson.githubsdk.model.IssueEventType;
 import com.meisolsson.githubsdk.model.Reactions;
 import com.meisolsson.githubsdk.model.Review;
 import com.meisolsson.githubsdk.model.ReviewComment;
@@ -26,6 +24,9 @@ import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+
 public abstract class TimelineItem {
     public static final Comparator<TimelineItem> COMPARATOR = (lhs, rhs) -> {
         if (lhs.getCreatedAt() == null) {
@@ -37,6 +38,13 @@ public abstract class TimelineItem {
         return lhs.getCreatedAt().compareTo(rhs.getCreatedAt());
     };
 
+    public static TimelineItem fromIssueEvent(IssueEvent event) {
+        if (event.event() == IssueEventType.Commented) {
+            return new TimelineComment(event.toComment());
+        } else {
+            return new TimelineEvent(event);
+        }
+    }
 
     public static class TimelineComment extends TimelineItem {
         private static final Pattern PULL_REQUEST_PATTERN =
@@ -50,7 +58,7 @@ public abstract class TimelineItem {
 
         private Diff diff;
 
-        public TimelineComment(@NonNull GitHubComment comment) {
+        public TimelineComment(@NonNull GitHubCommentBase comment) {
             this.comment = comment;
             this.file = null;
         }
@@ -69,11 +77,11 @@ public abstract class TimelineItem {
         }
 
         public void setReactions(Reactions reactions) {
-            if (comment instanceof ReviewComment) {
-                comment = ((ReviewComment) comment).toBuilder().reactions(reactions).build();
-            } else {
-                comment = ((GitHubComment) comment).toBuilder().reactions(reactions).build();
-            }
+            comment = comment.withReactions(reactions);
+        }
+
+        public boolean hasFilePatch() {
+            return file != null && file.patch() != null;
         }
 
         @Nullable

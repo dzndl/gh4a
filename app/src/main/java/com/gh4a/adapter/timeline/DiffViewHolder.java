@@ -5,15 +5,15 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Canvas;
 import android.graphics.Paint;
+import android.graphics.Typeface;
 import android.net.Uri;
-import androidx.core.content.ContextCompat;
-import androidx.appcompat.widget.PopupMenu;
 import android.text.SpannableStringBuilder;
 import android.text.Spanned;
 import android.text.TextPaint;
 import android.text.TextUtils;
 import android.text.style.ClickableSpan;
 import android.text.style.LineBackgroundSpan;
+import android.text.style.TypefaceSpan;
 import android.util.TypedValue;
 import android.view.Menu;
 import android.view.View;
@@ -27,10 +27,12 @@ import com.gh4a.utils.StringUtils;
 import com.gh4a.utils.UiUtils;
 import com.meisolsson.githubsdk.model.ReviewComment;
 
-class DiffViewHolder extends TimelineItemAdapter.TimelineItemViewHolder<TimelineItem.Diff>
-        implements View.OnClickListener {
+import androidx.appcompat.widget.PopupMenu;
+import androidx.core.content.ContextCompat;
+
+class DiffViewHolder extends TimelineItemAdapter.TimelineItemViewHolder<TimelineItem.Diff> {
     private static final float[] DIFF_SIZE_MULTIPLIERS = new float[] {
-            0.667F, 0.833F, 1F, 1.5F, 2F
+            0.8F, 0.9F, 1F, 1.25F, 1.5F
     };
 
     private final int mAddedLineBackgroundColor;
@@ -68,13 +70,13 @@ class DiffViewHolder extends TimelineItemAdapter.TimelineItemViewHolder<Timeline
         mDefaultBackgroundColor = ContextCompat.getColor(context, R.color.diff_default_background);
         mDefaultLineNumberBackgroundColor =
                 ContextCompat.getColor(context, R.color.diff_default_line_number_background);
-        mAccentColor = UiUtils.resolveColor(context, R.attr.colorAccent);
+        mAccentColor = UiUtils.resolveColor(context, androidx.appcompat.R.attr.colorAccent);
         mPadding = context.getResources().getDimensionPixelSize(R.dimen.code_diff_padding);
 
         mDiffHunkTextView = itemView.findViewById(R.id.diff_hunk);
         mInitialDiffTextSize = mDiffHunkTextView.getTextSize();
         mFileTextView = itemView.findViewById(R.id.tv_file);
-        mFileTextView.setOnClickListener(this);
+        mFileTextView.setOnClickListener(this::onFileNameClick);
     }
 
     @Override
@@ -88,10 +90,24 @@ class DiffViewHolder extends TimelineItemAdapter.TimelineItemViewHolder<Timeline
         mFileTextView.setPaintFlags(isOutdated
                 ? mFileTextView.getPaintFlags() | Paint.STRIKE_THRU_TEXT_FLAG
                 : mFileTextView.getPaintFlags() & ~Paint.STRIKE_THRU_TEXT_FLAG);
-        mFileTextView.setClickable(!isOutdated);
-        mFileTextView.setTextColor(isOutdated ? mSecondaryTextColor : mAccentColor);
+        boolean isClickable = !isOutdated && item.getInitialTimelineComment().hasFilePatch();
+        mFileTextView.setClickable(isClickable);
+        mFileTextView.setTextColor(isClickable ? mAccentColor : mSecondaryTextColor);
 
-        String[] lines = comment.diffChunk().split("\n");
+        String diffHunk = comment.diffChunk();
+        if (diffHunk.isEmpty()) {
+            mDiffHunkTextView.setVisibility(View.GONE);
+        } else {
+            mDiffHunkTextView.setVisibility(View.VISIBLE);
+            mDiffHunkTextView.setTypeface(Typeface.MONOSPACE);
+            mDiffHunkTextView.setText(buildFormattedDiffText(item, diffHunk));
+            mDiffHunkTextView.setTextSize(TypedValue.COMPLEX_UNIT_PX,
+                    mInitialDiffTextSize * getDiffSizeMultiplier());
+        }
+    }
+
+    private SpannableStringBuilder buildFormattedDiffText(TimelineItem.Diff item, String diffHunk) {
+        String[] lines = diffHunk.split("\n");
 
         int leftLine = 0;
         int rightLine = 0;
@@ -156,10 +172,12 @@ class DiffViewHolder extends TimelineItemAdapter.TimelineItemViewHolder<Timeline
             DiffLineSpan span = new DiffLineSpan(backgroundColor, lineNumberBackgroundColor, mPadding, i == start,
                     i == lines.length - 1, lineNumberLength);
             builder.setSpan(span, spanStart, builder.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+
+            // We want to make only the line numbers monospaced, and the rest of the line normal for compactness reasons
+            builder.setSpan(new TypefaceSpan("normal"),
+                    spanStart + lineNumberLength, builder.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
         }
-        mDiffHunkTextView.setText(builder);
-        mDiffHunkTextView.setTextSize(TypedValue.COMPLEX_UNIT_PX,
-                mInitialDiffTextSize * getDiffSizeMultiplier());
+        return builder;
     }
 
     private float getDiffSizeMultiplier() {
@@ -200,16 +218,12 @@ class DiffViewHolder extends TimelineItemAdapter.TimelineItemViewHolder<Timeline
         }
     }
 
-    @Override
-    public void onClick(View view) {
-        if (view.getId() == R.id.tv_file) {
-            TimelineItem.TimelineComment timelineComment =
-                    (TimelineItem.TimelineComment) view.getTag();
-            Intent intent = timelineComment.makeDiffIntent(mContext);
+    private void onFileNameClick(View view) {
+        var timelineComment = (TimelineItem.TimelineComment) view.getTag();
+        Intent intent = timelineComment.makeDiffIntent(mContext);
 
-            if (intent != null) {
-                view.getContext().startActivity(intent);
-            }
+        if (intent != null) {
+            view.getContext().startActivity(intent);
         }
     }
 
@@ -230,7 +244,8 @@ class DiffViewHolder extends TimelineItemAdapter.TimelineItemViewHolder<Timeline
         Menu menu = popupMenu.getMenu();
         popupMenu.getMenuInflater().inflate(R.menu.review_diff_hunk_menu, menu);
 
-        menu.findItem(R.id.view_in_file).setVisible(diff.getInitialComment().position() != null);
+        menu.findItem(R.id.view_in_file)
+            .setVisible(diff.getInitialTimelineComment().hasFilePatch() && diff.getInitialComment().position() != null);
 
         popupMenu.setOnMenuItemClickListener(item -> {
             switch (item.getItemId()) {

@@ -27,7 +27,6 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewStub;
-import android.widget.Button;
 import android.widget.EditText;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
@@ -162,7 +161,7 @@ public class EditorBottomSheet extends FrameLayout implements View.OnClickListen
         mContainer = view.findViewById(R.id.bottom_sheet_header_container);
 
         post(() -> {
-            getBehavior().setBottomSheetCallback(mBehaviorCallback);
+            getBehavior().addBottomSheetCallback(mBehaviorCallback);
             resetPeekHeight(0);
             updateSendButtonState();
 
@@ -449,7 +448,9 @@ public class EditorBottomSheet extends FrameLayout implements View.OnClickListen
                 .compose(RxUtils.wrapForBackgroundTask(activity, rootLayout,
                         R.string.saving_comment, R.string.issue_error_comment))
                 .subscribe(result -> {
-                    mCallback.onEditorTextSent();
+                    if (mCallback.getActivity() != null) {
+                        mCallback.onEditorTextSent();
+                    }
                     setCommentText(null, true);
                     setAdvancedMode(false);
                 }, error -> Log.d(Gh4Application.LOG_TAG, "Sending comment failed", error));

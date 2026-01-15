@@ -6,7 +6,7 @@ This application provides access to [GitHub](https://github.com/) and lets you s
 
 Download
 --------
-<a href='https://play.google.com/store/apps/details?id=com.gh4a'><img alt='Get it on Google Play' src='https://play.google.com/intl/en_us/badges/images/generic/en_badge_web_generic.png' height="80px" align="left"/></a> [![Download OctoDroid from F-Droid.org](https://i.imgur.com/um29KX1.png)](https://f-droid.org/packages/com.gh4a/)
+[<img src="https://f-droid.org/badge/get-it-on.png" alt="Get it on F-Droid" height="80px">](https://f-droid.org/packages/com.gh4a/)
 
 Main features
 -------------
@@ -44,7 +44,7 @@ Main features
 
 ### Tree/File browser
 * Browse source code
-* View code with syntax hightlighting
+* View code with syntax highlighting
 
 ### Gist
 * List public gists
@@ -59,7 +59,7 @@ Main features
 
 How to Build Octodroid
 ----------------------
-- Ensure Android SDK platform version 26 and build-tools version 26.0.2 are installed
+- Ensure Android SDK platform and build-tools are installed
 - Register an application for your OctoDroid usage under your [GitHub settings](https://github.com/settings/developers)
   * naming is up to you
   * callback URL must be gh4a://oauth
@@ -84,8 +84,8 @@ ClientSecret="<CLIENT SECRET DISPLAYED IN APPLICATION SETTINGS>"
 Open Source Libraries
 ---------------------
 * [android-gif-drawable](https://github.com/koral--/android-gif-drawable)
-* [Android-Job](https://github.com/evernote/android-job)
 * [AndroidSVG](https://github.com/BigBadaboom/androidsvg)
+* [AndroidX](https://github.com/androidx/androidx)
 * [emoji-java](https://github.com/vdurmont/emoji-java)
 * [GitHubSdk](https://github.com/maniac103/GitHubSdk)
 * [HoloColorPicker](https://github.com/LarsWerkman/HoloColorPicker)

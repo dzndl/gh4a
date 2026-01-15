@@ -17,7 +17,7 @@
         android:layout_marginLeft="8dp"
         android:orientation="vertical">
 
-        <com.gh4a.widget.StyleableTextView
+        <TextView
             android:id="@+id/tv_milestone"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -32,7 +32,7 @@
             tools:text="v2.10.3"
             tools:visibility="visible" />
 
-        <com.gh4a.widget.StyleableTextView
+        <TextView
             android:id="@+id/tv_comments"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -61,30 +61,38 @@
         android:layout_gravity="bottom"
         android:layout_marginTop="8dp" />
 
-    <com.gh4a.widget.StyleableTextView
-        android:id="@+id/tv_creator"
+    <LinearLayout
+        android:id="@+id/username_and_date"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_toRightOf="@id/iv_gravatar"
-        android:textAppearance="?android:attr/textAppearanceSmall"
-        android:textColor="?android:attr/textColorPrimary"
-        tools:text="IssueCreatorUsername" />
+        android:layout_toRightOf="@id/iv_gravatar">
 
-    <com.gh4a.widget.StyleableTextView
-        android:id="@+id/tv_timestamp"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_alignBaseline="@id/tv_creator"
-        android:layout_marginLeft="16dp"
-        android:layout_toRightOf="@id/tv_creator"
-        android:textAppearance="@style/TextAppearance.VerySmall"
-        tools:text="yesterday" />
+        <TextView
+            android:id="@+id/tv_creator"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:maxLines="2"
+            android:ellipsize="end"
+            android:textAppearance="?android:attr/textAppearanceSmall"
+            android:textColor="?android:attr/textColorPrimary"
+            tools:text="IssueCreatorUsername"
+            tools:ignore="InefficientWeight" />
 
-    <com.gh4a.widget.StyleableTextView
+        <TextView
+            android:id="@+id/tv_timestamp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginLeft="16dp"
+            android:textAppearance="@style/TextAppearance.VerySmall"
+            tools:text="yesterday" />
+    </LinearLayout>
+
+    <TextView
         android:id="@+id/tv_desc"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_below="@id/tv_creator"
+        android:layout_below="@id/username_and_date"
         android:layout_toLeftOf="@id/info"
         android:layout_toRightOf="@id/iv_gravatar"
         android:ellipsize="end"
@@ -92,7 +100,7 @@
         android:textAppearance="@style/TextAppearance.ItemTitle"
         tools:text="Long issue title that is supposed to wrap in the layout preview." />
 
-    <com.gh4a.widget.StyleableTextView
+    <TextView
         android:id="@+id/tv_number"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"

@@ -3,10 +3,14 @@ package com.gh4a.fragment;
 import android.content.Context;
 import android.net.Uri;
 import android.os.Bundle;
+
+import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.fragment.app.Fragment;
 import androidx.fragment.app.FragmentManager;
 import androidx.fragment.app.FragmentTransaction;
+import androidx.loader.app.LoaderManager;
+
 import android.text.TextUtils;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -18,7 +22,6 @@ import com.gh4a.ServiceFactory;
 import com.gh4a.activities.FileViewerActivity;
 import com.gh4a.activities.RepositoryActivity;
 import com.gh4a.utils.ApiHelpers;
-import com.gh4a.utils.Optional;
 import com.gh4a.utils.RxUtils;
 import com.gh4a.utils.StringUtils;
 import com.gh4a.widget.PathBreadcrumbs;
@@ -32,10 +35,12 @@ import com.philosophicalhacker.lib.RxLoader;
 
 import java.net.HttpURLConnection;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.Stack;
 
@@ -81,16 +86,16 @@ public class ContentListContainerFragment extends Fragment implements
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        mRxLoader = new RxLoader(getActivity(), getLoaderManager());
+        mRxLoader = new RxLoader(getActivity(), LoaderManager.getInstance(this));
         mRepository = getArguments().getParcelable("repository");
         mSelectedRef = getArguments().getString("ref");
         mStateSaved = false;
 
         mCacheFragment = (ContentListCacheFragment)
-                getFragmentManager().findFragmentByTag("content_list_cache");
+                getParentFragmentManager().findFragmentByTag("content_list_cache");
         if (mCacheFragment == null) {
             mCacheFragment = new ContentListCacheFragment();
-            getFragmentManager().beginTransaction()
+            getParentFragmentManager().beginTransaction()
                     .add(mCacheFragment, "content_list_cache")
                     .commitAllowingStateLoss();
         }
@@ -115,7 +120,7 @@ public class ContentListContainerFragment extends Fragment implements
     }
 
     @Override
-    public void onAttach(Context context) {
+    public void onAttach(@NonNull Context context) {
         super.onAttach(context);
         if (context instanceof CommitSelectionCallback) {
             mCommitCallback = (CommitSelectionCallback) context;
@@ -176,17 +181,19 @@ public class ContentListContainerFragment extends Fragment implements
     }
 
     @Override
-    public void onViewCreated(View view, @Nullable Bundle savedInstanceState) {
+    public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
         mBreadcrumbs = view.findViewById(R.id.breadcrumbs);
         mBreadcrumbs.setCallback(this);
         mStateSaved = false;
         updateBreadcrumbs();
-        addFragmentForTopOfStack();
+        if (savedInstanceState == null) {
+            addFragmentForTopOfStack();
+        }
     }
 
     @Override
-    public void onSaveInstanceState(Bundle outState) {
+    public void onSaveInstanceState(@NonNull Bundle outState) {
         super.onSaveInstanceState(outState);
         outState.putStringArrayList(STATE_KEY_DIR_STACK, new ArrayList<>(mDirStack));
         outState.putStringArrayList(STATE_KEY_INITIAL_PATH, mInitialPathToLoad);
@@ -199,7 +206,7 @@ public class ContentListContainerFragment extends Fragment implements
             return;
         }
         mCacheFragment.addToCache(fragment.getPath(), contents);
-        if (fragment.getPath() == null) {
+        if (TextUtils.isEmpty(fragment.getPath())) {
             for (Content content : contents) {
                 if (content.type() == ContentType.File && content.name().equals(".gitmodules")) {
                     loadModuleMap();
@@ -252,10 +259,10 @@ public class ContentListContainerFragment extends Fragment implements
     @Override
     public Set<String> getSubModuleNames(ContentListFragment fragment) {
         if (mGitModuleMap == null) {
-            return null;
+            return Collections.emptySet();
         }
 
-        String prefix = fragment.getPath() == null ? null : (fragment.getPath() + "/");
+        String prefix = TextUtils.isEmpty(fragment.getPath()) ? null : fragment.getPath() + "/";
         Set<String> names = new HashSet<>();
         for (String name : mGitModuleMap.keySet()) {
             if (prefix == null && !name.contains("/")) {
@@ -313,27 +320,26 @@ public class ContentListContainerFragment extends Fragment implements
         String repoOwner = mRepository.owner().login();
         String repoName = mRepository.name();
 
-        service.getContents(repoOwner, repoName, ".gitmodules", mSelectedRef)
+        service.getContentsRaw(repoOwner, repoName, ".gitmodules", mSelectedRef)
                 .map(ApiHelpers::throwOnFailure)
                 .map(Optional::of)
-                .compose(RxUtils.mapFailureToValue(HttpURLConnection.HTTP_NOT_FOUND, Optional.<Content>absent()))
-                .map(contentOpt -> contentOpt.map(content -> StringUtils.fromBase64(content.content())))
+                .compose(RxUtils.mapFailureToValue(HttpURLConnection.HTTP_NOT_FOUND, Optional.<byte[]>empty()))
                 .map(this::parseModuleMap)
                 .subscribeOn(Schedulers.io())
                 .observeOn(AndroidSchedulers.mainThread())
                 .compose(mRxLoader.makeSingleTransformer(ID_LOADER_MODULEMAP, true))
                 .subscribe(resultOpt -> {
-                    mGitModuleMap = resultOpt.orNull();
+                    mGitModuleMap = resultOpt.orElse(null);
                     if (mContentListFragment != null) {
                         mContentListFragment.onSubModuleNamesChanged(getSubModuleNames(mContentListFragment));
                     }
                 }, ((BaseActivity) getActivity())::handleLoadFailure);
     }
 
-    private Optional<Map<String, String>> parseModuleMap(Optional<String> inputOpt) {
-        String input = inputOpt.orNull();
+    private Optional<Map<String, String>> parseModuleMap(Optional<byte[]> inputOpt) {
+        String input = inputOpt.map(bytes -> new String(bytes)).orElse(null);
         if (StringUtils.isBlank(input)) {
-            return Optional.absent();
+            return Optional.empty();
         }
         Map<String, String> result = new HashMap<>();
         String pendingPath = null;

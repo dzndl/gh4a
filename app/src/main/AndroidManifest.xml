@@ -2,7 +2,6 @@
 <manifest
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
-    package="com.gh4a"
     android:installLocation="auto">
 
     <!-- see http://stackoverflow.com/questions/32070670/preferencefragmentcompat-requires-preferencetheme-to-be-set -->
@@ -13,6 +12,25 @@
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="https" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="http" />
+        </intent>
+        <intent>
+            <action android:name="android.support.customtabs.action.CustomTabsService" />
+        </intent>
+    </queries>
+
     <application
         android:name="com.gh4a.Gh4Application"
         android:allowBackup="true"
@@ -23,6 +41,7 @@
         <activity
             android:name=".activities.Github4AndroidActivity"
             android:launchMode="singleTop"
+            android:exported="true"
             android:configChanges="orientation|screenSize" >
             <intent-filter>
                 <action
@@ -130,6 +149,7 @@
         <activity android:name=".resolver.BrowseFilter"
             android:excludeFromRecents="true"
             android:taskAffinity=""
+            android:exported="true"
             android:theme="@style/TransparentTheme">
             <intent-filter>
                 <action
@@ -162,9 +182,15 @@
         <service android:name=".worker.NotificationHandlingService" />
 
         <provider
-            android:name="androidx.work.impl.WorkManagerInitializer"
-            android:authorities="${applicationId}.workmanager-init"
-            tools:node="remove" />
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            android:exported="false"
+            tools:node="merge">
+            <meta-data
+                android:name="androidx.work.WorkManagerInitializer"
+                android:value="androidx.startup"
+                tools:node="remove" />
+        </provider>
 
         <provider
             android:name=".db.BookmarksProvider"
@@ -176,12 +202,6 @@
             android:authorities="${applicationId}.SuggestionsProvider"
             android:exported="false" />
 
-        <receiver
-            android:name="EventReceiver">
-            <intent-filter>
-                <action android:name="android.intent.action.DOWNLOAD_NOTIFICATION_CLICKED" />
-            </intent-filter>
-        </receiver>
-        <meta-data android:name="com.crashlytics.ApiKey" android:value="684bb8e255484484ea06ed1e229adb4ca4e8bf6b"/>
+        <meta-data android:name="android.webkit.WebView.MetricsOptOut" android:value="true" />
     </application>
 </manifest>

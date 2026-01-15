@@ -19,6 +19,9 @@ import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Parcelable;
+
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.Nullable;
 import androidx.collection.LongSparseArray;
 import androidx.appcompat.widget.PopupMenu;
@@ -32,8 +35,10 @@ import android.view.View;
 import com.gh4a.Gh4Application;
 import com.gh4a.R;
 import com.gh4a.fragment.ConfirmationDialogFragment;
+import com.gh4a.utils.ActivityResultHelpers;
 import com.gh4a.utils.ApiHelpers;
 import com.gh4a.utils.FileUtils;
+import com.gh4a.utils.HtmlUtils;
 import com.gh4a.utils.IntentUtils;
 import com.gh4a.utils.RxUtils;
 import com.gh4a.utils.StringUtils;
@@ -55,17 +60,23 @@ public abstract class DiffViewerActivity<C extends PositionalCommentBase> extend
             String repoOwner, String repoName, String commitSha, String path, String diff,
             List<C> comments, int initialLine, int highlightStartLine, int highlightEndLine,
             boolean highlightisRight, IntentUtils.InitialCommentMarker initialComment) {
-        return baseIntent.putExtra("owner", repoOwner)
+        Intent intent = baseIntent.putExtra("owner", repoOwner)
                 .putExtra("repo", repoName)
                 .putExtra("sha", commitSha)
                 .putExtra("path", path)
                 .putExtra("diff", diff)
-                .putExtra("comments", comments != null ? new ArrayList<>(comments) : null)
                 .putExtra("initial_line", initialLine)
                 .putExtra("highlight_start", highlightStartLine)
                 .putExtra("highlight_end", highlightEndLine)
                 .putExtra("highlight_right", highlightisRight)
                 .putExtra("initial_comment", initialComment);
+        if (comments != null) {
+            // When there are lots of comments containing a huge amount of text, the extras bundle may
+            // become too large, causing a TransactionTooLargeException when launching the activity.
+            // In order to avoid this problem, we store the data in compressed form
+            IntentUtils.putCompressedExtra(intent, "comments", comments);
+        }
+        return intent;
     }
 
     private static final String COMMENT_ADD_URI_FORMAT =
@@ -106,8 +117,39 @@ public abstract class DiffViewerActivity<C extends PositionalCommentBase> extend
             + "A1.5,1.5 0 0,0 15.5,8A1.5,1.5 0 0,0 14,9.5A1.5,1.5 0 0,0 15.5,11M12,20"
             + "A8,8 0 0,1 4,12A8,8 0 0,1 12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20M12,2"
             + "C6.47,2 2,6.5 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2Z";
+    private static final String REACTION_ROCKET_PATH = "M2.81,14.12L5.64,11.29L8.17,10.79C11.39,"
+            + "6.41 17.55,4.22 19.78,4.22C19.78,6.45 17.59,12.61 13.21,15.83L12.71,18.36L9.88,21.19"
+            + "L9.17,17.66C7.76,17.66 7.76,17.66 7.05,16.95C6.34,16.24 6.34,16.24 6.34,14.83L2.81,"
+            + "14.12M5.64,16.95L7.05,18.36L4.39,21.03H2.97V19.61L5.64,16.95M4.22,15.54L5.46,15.71L3"
+            + ",18.16V16.74L4.22,15.54M8.29,18.54L8.46,19.78L7.26,21H5.84L8.29,18.54M13,9.5A1.5,1.5"
+            + " 0 0,0 11.5,11A1.5,1.5 0 0,0 13,12.5A1.5,1.5 0 0,0 14.5,11A1.5,1.5 0 0,0 13,9.5Z";
+    private static final String REACTION_EYES_PATH = "m6.859,3.0605c-1.5576,0 -2.81,1.1899 "
+            + "-3.6426,2.8164 -0.8326,1.6265 -1.3164,3.7842 -1.3164,6.1602 0,2.3759 0.4838,4.5337 "
+            + "1.3164,6.1602 0.8326,1.6265 2.085,2.8164 3.6426,2.8164 1.5576,0 2.812,-1.1899 3.6445,"
+            + "-2.8164 0.8326,-1.6265 1.3164,-3.7842 1.3164,-6.1602 0,-2.3759 -0.4838,-4.5337 "
+            + "-1.3164,-6.1602 -0.8326,-1.6265 -2.0869,-2.8164 -3.6445,-2.8164zM6.859,4.5547c0.769,"
+            + "0 1.6223,0.6518 2.3145,2.0039 0.6921,1.3521 1.1523,3.3092 1.1523,5.4785 -0,2.1693 "
+            + "-0.4602,4.1264 -1.1523,5.4785 -0.6921,1.3521 -1.5455,2.0039 -2.3145,2.0039 -0.769,0 "
+            + "-1.6223,-0.6518 -2.3145,-2.0039 -0.4294,-0.8388 -0.7515,-1.9261 -0.9473,-3.1367"
+            + "a2.4463,3.8986 0,0 0,2.252 2.3867,2.4463 3.8986,0 0,0 2.4473,-3.8984 2.4463,3.8986 "
+            + "0,0 0,-2.4473 -3.8984,2.4463 3.8986,0 0,0 -2.4336,3.5c-0.0042,-0.1459 -0.0215,-0.2837 "
+            + "-0.0215,-0.4316 0,-2.1693 0.4583,-4.1264 1.1504,-5.4785 0.6921,-1.3521 1.5455,-2.0039 "
+            + "2.3145,-2.0039z M17.139,3.0234c-1.5576,0 -2.81,1.1899 -3.6426,2.8164 -0.8326,1.6265 "
+            + "-1.3164,3.7842 -1.3164,6.1602 0,2.3759 0.4838,4.5337 1.3164,6.1602 0.8326,1.6265 "
+            + "2.085,2.8164 3.6426,2.8164 1.5576,0 2.812,-1.1899 3.6445,-2.8164 0.8326,-1.6265 "
+            + "1.3164,-3.7842 1.3164,-6.1602 0,-2.3759 -0.4838,-4.5337 -1.3164,-6.1602 -0.8326,"
+            + "-1.6265 -2.0869,-2.8164 -3.6445,-2.8164zM17.139,4.5176c0.769,0 1.6223,0.6518 2.3145,"
+            + "2.0039 0.6921,1.3521 1.1523,3.3092 1.1523,5.4785 -0,2.1693 -0.4602,4.1264 -1.1523,"
+            + "5.4785 -0.6921,1.3521 -1.5455,2.0039 -2.3145,2.0039 -0.769,0 -1.6223,-0.6518 -2.3145,"
+            + "-2.0039 -0.4294,-0.8388 -0.7515,-1.9261 -0.9473,-3.1367a2.4463,3.8986 0,0 0,2.252 "
+            + "2.3867,2.4463 3.8986,0 0,0 2.4473,-3.8984 2.4463,3.8986 0,0 0,-2.4473 -3.8984,2.4463 "
+            + "3.8986,0 0,0 -2.4336,3.5c-0.0042,-0.1459 -0.0215,-0.2837 -0.0215,-0.4316 0,-2.1693 "
+            + "0.4583,-4.1264 1.1504,-5.4785 0.6921,-1.3521 1.5455,-2.0039 2.3145,-2.0039z";
 
-    protected static final int REQUEST_EDIT = 0;
+    protected final ActivityResultLauncher<Intent> mEditLauncher = registerForActivityResult(
+            new ActivityResultContracts.StartActivityForResult(),
+            new ActivityResultHelpers.ActivityResultSuccessCallback(() -> refresh())
+    );
 
     private static final int ID_LOADER_COMMENTS = 0;
 
@@ -123,9 +165,9 @@ public abstract class DiffViewerActivity<C extends PositionalCommentBase> extend
     private final ReactionBar.ReactionDetailsCache mReactionDetailsCache =
             new ReactionBar.ReactionDetailsCache(this);
 
-    protected static class CommitCommentWrapper implements ReactionBar.Item {
+    protected static class CommentWrapper implements ReactionBar.Item {
         public PositionalCommentBase comment;
-        public CommitCommentWrapper(PositionalCommentBase comment) {
+        public CommentWrapper(PositionalCommentBase comment) {
             this.comment = comment;
         }
         @Override
@@ -136,13 +178,12 @@ public abstract class DiffViewerActivity<C extends PositionalCommentBase> extend
 
     private String mDiff;
     private String[] mDiffLines;
-    private final SparseArray<List<PositionalCommentBase>> mCommitCommentsByPos = new SparseArray<>();
-    private final LongSparseArray<CommitCommentWrapper> mCommitComments = new LongSparseArray<>();
+    private final SparseArray<List<PositionalCommentBase>> mCommentsByPosition = new SparseArray<>();
+    private final LongSparseArray<CommentWrapper> mWrappedComments = new LongSparseArray<>();
 
     private static final int MENU_ITEM_VIEW = 10;
 
     @Override
-    @SuppressWarnings("unchecked")
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
@@ -211,9 +252,24 @@ public abstract class DiffViewerActivity<C extends PositionalCommentBase> extend
 
     @Override
     public void onReactionsUpdated(ReactionBar.Item item, Reactions reactions) {
-        CommitCommentWrapper comment = (CommitCommentWrapper) item;
-        comment.comment = onUpdateReactions(comment.comment, reactions);
+        CommentWrapper wrapper = (CommentWrapper) item;
+        wrapper.comment = wrapper.comment.withReactions(reactions);
+        replaceOutdatedComment(wrapper.comment);
         onDataReady();
+    }
+
+    private void replaceOutdatedComment(PositionalCommentBase updatedComment) {
+        List<PositionalCommentBase> comments = mCommentsByPosition.get(updatedComment.position());
+        int outdatedCommentIndex = -1;
+        for (int i = 0; i < comments.size(); i++) {
+            if (comments.get(i).id().equals(updatedComment.id())) {
+                outdatedCommentIndex = i;
+                break;
+            }
+        }
+        if (outdatedCommentIndex != -1) {
+            comments.set(outdatedCommentIndex, updatedComment);
+        }
     }
 
     @Override
@@ -227,8 +283,8 @@ public abstract class DiffViewerActivity<C extends PositionalCommentBase> extend
             content.append(title);
         }
         content.append("</title>");
-        writeCssInclude(content, "text", cssTheme);
-        writeScriptInclude(content, "codeutils");
+        HtmlUtils.writeCssInclude(content, "diff", cssTheme);
+        HtmlUtils.writeScriptInclude(content, "codeutils");
         content.append("</head><body");
 
         int highlightInsertPos = content.length();
@@ -284,11 +340,11 @@ public abstract class DiffViewerActivity<C extends PositionalCommentBase> extend
             }
             content.append(">").append(TextUtils.htmlEncode(line)).append("</div>");
 
-            List<PositionalCommentBase> comments = mCommitCommentsByPos.get(i);
+            List<PositionalCommentBase> comments = mCommentsByPosition.get(i);
             if (comments != null) {
                 for (PositionalCommentBase comment : comments) {
                     long id = comment.id();
-                    mCommitComments.put(id, new CommitCommentWrapper(comment));
+                    mWrappedComments.put(id, new CommentWrapper(comment));
                     content.append("<div ").append("id=\"comment").append(id).append("\"");
                     content.append(" class=\"comment");
                     if (mInitialComment != null && mInitialComment.matches(id, null)) {
@@ -316,6 +372,8 @@ public abstract class DiffViewerActivity<C extends PositionalCommentBase> extend
                         appendReactionSpan(content, reactions.heart(), REACTION_HEART_PATH);
                         appendReactionSpan(content, reactions.laugh(), REACTION_LAUGH_PATH);
                         appendReactionSpan(content, reactions.hooray(), REACTION_HOORAY_PATH);
+                        appendReactionSpan(content, reactions.rocket(), REACTION_ROCKET_PATH);
+                        appendReactionSpan(content, reactions.eyes(), REACTION_EYES_PATH);
                         content.append("</div>");
                     }
                     content.append("</div>");
@@ -377,31 +435,20 @@ public abstract class DiffViewerActivity<C extends PositionalCommentBase> extend
     @Override
     public void onConfirmed(String tag, Parcelable data) {
         long id = ((Bundle) data).getLong("id");
-        doDeleteComment(id);
-    }
-
-    @Override
-    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        if (requestCode == REQUEST_EDIT) {
-            if (resultCode == RESULT_OK) {
-                refresh();
-            }
-        } else {
-            super.onActivityResult(requestCode, resultCode, data);
-        }
+        deleteComment(id);
     }
 
     private void addCommentsToMap(List<C> comments) {
-        mCommitCommentsByPos.clear();
+        mCommentsByPosition.clear();
         for (PositionalCommentBase comment : comments) {
             if (!TextUtils.equals(comment.path(), mPath)) {
                 continue;
             }
             int position = comment.position();
-            List<PositionalCommentBase> commentsByPos = mCommitCommentsByPos.get(position);
+            List<PositionalCommentBase> commentsByPos = mCommentsByPosition.get(position);
             if (commentsByPos == null) {
                 commentsByPos = new ArrayList<>();
-                mCommitCommentsByPos.put(position, commentsByPos);
+                mCommentsByPosition.put(position, commentsByPos);
             }
             commentsByPos.add(comment);
         }
@@ -439,26 +486,24 @@ public abstract class DiffViewerActivity<C extends PositionalCommentBase> extend
         // Make sure our callers are aware of the change
         setResult(RESULT_OK);
 
-        mCommitComments.clear();
+        mWrappedComments.clear();
         loadComments(false, true);
         setContentShown(false);
     }
 
-    protected abstract Single<List<C>> createCommentSingle(boolean bypassCache);
+    protected abstract Single<List<C>> getCommentsSingle(boolean bypassCache);
     protected abstract void openCommentDialog(long id, long replyToId, String line,
             int position, int leftLine, int rightLine, PositionalCommentBase commitComment);
-    protected abstract Single<Response<Void>> doDeleteComment(long id);
+    protected abstract Single<Response<Void>> deleteCommentSingle(long id);
     protected abstract boolean canReply();
     protected abstract Uri createUrl(String lineId, long replyId);
-    protected abstract PositionalCommentBase onUpdateReactions(PositionalCommentBase comment,
-            Reactions reactions);
 
     private String createLineLinkId(int line, boolean isRight) {
         return (isRight ? "R" : "L") + line;
     }
 
     private void deleteComment(long id) {
-        doDeleteComment(id)
+        deleteCommentSingle(id)
                 .map(ApiHelpers::mapToBooleanOrThrowOnFailure)
                 .compose(RxUtils.wrapForBackgroundTask(this, R.string.deleting_msg,
                         getString(R.string.error_delete_commit_comment)))
@@ -468,12 +513,12 @@ public abstract class DiffViewerActivity<C extends PositionalCommentBase> extend
 
     private void loadComments(boolean useIntentExtraIfPresent, boolean force) {
         List<C> intentComments = useIntentExtraIfPresent
-                ? getIntent().getParcelableArrayListExtra("comments") : null;
-        Single<List<C>> commentSingle = intentComments != null
+                ? IntentUtils.getCompressedExtra(getIntent(), "comments") : null;
+        Single<List<C>> commentsSingle = intentComments != null
                 ? Single.just(intentComments)
-                : createCommentSingle(force).compose(makeLoaderSingle(ID_LOADER_COMMENTS, force));
+                : getCommentsSingle(force).compose(makeLoaderSingle(ID_LOADER_COMMENTS, force));
 
-        commentSingle.subscribe(result -> {
+        commentsSingle.subscribe(result -> {
             addCommentsToMap(result);
             onDataReady();
         }, this::handleLoadFailure);
@@ -501,14 +546,14 @@ public abstract class DiffViewerActivity<C extends PositionalCommentBase> extend
             mIsRightLine = isRightLine;
 
             Menu menu = getMenu();
-            CommitCommentWrapper comment = mCommitComments.get(mId);
+            CommentWrapper comment = mWrappedComments.get(mId);
             String ownLogin = Gh4Application.get().getAuthLogin();
 
             getMenuInflater().inflate(R.menu.commit_comment_actions, menu);
             if (id == 0 || !canReply()) {
                 menu.removeItem(R.id.reply);
             }
-            if (id == 0|| !ApiHelpers.loginEquals(comment.comment.user(), ownLogin)) {
+            if (id == 0 || !ApiHelpers.loginEquals(comment.comment.user(), ownLogin)) {
                 menu.removeItem(R.id.edit);
                 menu.removeItem(R.id.delete);
             }
@@ -550,7 +595,7 @@ public abstract class DiffViewerActivity<C extends PositionalCommentBase> extend
                     openCommentDialog(0L, mId, mLineText, mPosition, mLeftLine, mRightLine, null);
                     break;
                 case R.id.edit:
-                    CommitCommentWrapper wrapper = mCommitComments.get(mId);
+                    CommentWrapper wrapper = mWrappedComments.get(mId);
                     PositionalCommentBase comment = wrapper != null ? wrapper.comment : null;
                     openCommentDialog(mId, 0L, mLineText, mPosition, mLeftLine, mRightLine, comment);
                     break;

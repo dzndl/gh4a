@@ -1,78 +1,65 @@
 <?xml version="1.0" encoding="utf-8"?>
-<FrameLayout
-    xmlns:android="http://schemas.android.com/apk/res/android"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:orientation="vertical"
     android:padding="@dimen/content_padding"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <LinearLayout
-        android:id="@+id/cred_container"
+    <RadioGroup
+        android:id="@+id/login_mode"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical"
-        tools:visibility="gone">
+        android:paddingBottom="16dp">
 
-        <com.google.android.material.textfield.TextInputLayout
-            android:id="@+id/user_wrapper"
+        <com.google.android.material.radiobutton.MaterialRadioButton
+            android:id="@+id/oauth_button"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:hint="@string/credentials_username">
+            android:text="@string/login_oauth" />
 
-            <com.google.android.material.textfield.TextInputEditText
-                android:id="@+id/user_name"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:inputType="textNoSuggestions"
-                android:imeOptions="actionNext"
-                android:nextFocusDown="@+id/password"
-                android:singleLine="true" />
-
-        </com.google.android.material.textfield.TextInputLayout>
-
-        <com.google.android.material.textfield.TextInputLayout
-            android:id="@+id/password_wrapper"
+        <com.google.android.material.radiobutton.MaterialRadioButton
+            android:id="@+id/token_button"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:paddingTop="8dp"
-            android:hint="@string/credentials_password">
+            android:text="@string/login_token" />
 
-            <com.google.android.material.textfield.TextInputEditText
-                android:id="@+id/password"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:imeOptions="actionDone"
-                android:inputType="textPassword"
-                android:singleLine="true" />
+    </RadioGroup>
 
-        </com.google.android.material.textfield.TextInputLayout>
+    <FrameLayout
+        android:id="@+id/oauth_container"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
 
-    </LinearLayout>
+        <com.gh4a.widget.LinkHandlingTextView
+            android:id="@+id/oauth_hint"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/login_summary_oauth"
+            app:needsLinkHandling="true" />
+
+    </FrameLayout>
 
     <LinearLayout
-        android:id="@+id/otp_container"
+        android:id="@+id/token_container"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
         tools:visibility="visible">
 
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="4dp"
-            android:text="@string/credentials_otp_prompt" />
-
         <com.google.android.material.textfield.TextInputLayout
-            android:id="@+id/otp_wrapper"
+            android:id="@+id/token_wrapper"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:hint="@string/credentials_otp"
-            tools:visibility="gone">
+            android:hint="@string/credentials_token">
 
             <com.google.android.material.textfield.TextInputEditText
-                android:id="@+id/otp_code"
+                android:id="@+id/token"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:inputType="textNoSuggestions"
+                android:imeOptions="actionNext"
                 android:singleLine="true" />
 
         </com.google.android.material.textfield.TextInputLayout>
@@ -96,4 +83,4 @@
 
     </FrameLayout>
 
-</FrameLayout>
+</LinearLayout>

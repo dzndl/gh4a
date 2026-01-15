@@ -2,13 +2,13 @@ package com.gh4a.fragment;
 
 import android.content.Context;
 import android.os.Bundle;
-import androidx.annotation.Nullable;
+
 import androidx.fragment.app.Fragment;
+import androidx.loader.app.LoaderManager;
 
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
-import android.view.animation.AnimationUtils;
 
 import com.gh4a.BaseActivity;
 import com.gh4a.R;
@@ -35,7 +35,7 @@ public abstract class LoadingFragmentBase extends Fragment implements
     @Override
     public void onAttach(Context context) {
         super.onAttach(context);
-        mRxLoader = new RxLoader(context, getLoaderManager());
+        mRxLoader = new RxLoader(context, LoaderManager.getInstance(this));
     }
 
     @Override
@@ -55,8 +55,8 @@ public abstract class LoadingFragmentBase extends Fragment implements
         super.onViewCreated(view, savedInstanceState);
 
         mProgress = view.findViewById(R.id.progress);
-        mProgressColors[0] = UiUtils.resolveColor(mProgress.getContext(), R.attr.colorPrimary);
-        mProgressColors[1] = UiUtils.resolveColor(mProgress.getContext(), R.attr.colorPrimaryDark);
+        mProgressColors[0] = UiUtils.resolveColor(mProgress.getContext(), androidx.appcompat.R.attr.colorPrimary);
+        mProgressColors[1] = UiUtils.resolveColor(mProgress.getContext(), androidx.appcompat.R.attr.colorPrimaryDark);
         mProgress.setSmoothProgressDrawableColors(mProgressColors);
         updateContentVisibility();
     }
@@ -65,7 +65,6 @@ public abstract class LoadingFragmentBase extends Fragment implements
     public void onDestroyView() {
         super.onDestroyView();
         mContentContainer = null;
-        mProgress = null;
         mProgress = null;
     }
 
@@ -126,15 +125,8 @@ public abstract class LoadingFragmentBase extends Fragment implements
     private void updateContentVisibility() {
         View out = mContentShown ? mProgress : mContentContainer;
         View in = mContentShown ? mContentContainer : mProgress;
-        if (isResumed()) {
-            out.startAnimation(AnimationUtils.loadAnimation(getActivity(), android.R.anim.fade_out));
-            in.startAnimation(AnimationUtils.loadAnimation(getActivity(), android.R.anim.fade_in));
-        } else {
-            in.clearAnimation();
-            out.clearAnimation();
-        }
-        out.setVisibility(View.GONE);
-        in.setVisibility(View.VISIBLE);
+        UiUtils.updateViewVisibility(out, isResumed(), false);
+        UiUtils.updateViewVisibility(in, isResumed(), true);
     }
 
     protected abstract View onCreateContentView(LayoutInflater inflater, ViewGroup parent);

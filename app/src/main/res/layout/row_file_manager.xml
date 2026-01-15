@@ -20,7 +20,7 @@
         android:layout_marginRight="16dp"
         tools:src="@drawable/file" />
 
-    <com.gh4a.widget.StyleableTextView
+    <TextView
         android:id="@+id/tv_text"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
@@ -29,12 +29,12 @@
         android:textColor="?android:attr/textColorPrimary"
         tools:text="filename.txt" />
 
-    <com.gh4a.widget.StyleableTextView
+    <TextView
         android:id="@+id/tv_size"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_gravity="bottom"
-        android:layout_marginLeft="4dp"
+        android:layout_gravity="center"
+        android:layout_marginLeft="16dp"
         android:textAppearance="@style/TextAppearance.VerySmall"
         tools:text="2.5 KB" />
 

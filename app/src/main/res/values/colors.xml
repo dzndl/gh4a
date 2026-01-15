@@ -2,24 +2,28 @@
 <resources>
     <color name="primary">#65b345</color>
     <color name="primary_dark">#5aa03d</color>
-    <color name="accent">@color/primary_dark</color>
+    <color name="accent">@color/primary</color>
+
+    <color name="link_text">@color/primary_dark</color>
 
     <color name="label_fg_dark">#ff000000</color>
     <color name="label_fg_light">#fff3f3f3</color>
-    <color name="label_fg">@color/label_fg_light</color>
+    <color name="label_fg">@color/label_fg_dark</color>
 
     <color name="issue_open">#65b345</color>
     <color name="issue_closed">#b34545</color>
     <color name="pr_merged">#6945b3</color>
+    <color name="pr_draft">#6e7781</color>
     <color name="issue_open_dark">#5ba03d</color>
     <color name="issue_closed_dark">#a03d3d</color>
     <color name="pr_merged_dark">#5e3da0</color>
+    <color name="pr_draft_dark">#5f6670</color>
     <color name="issue_open_button">#83e658</color>
     <color name="issue_closed_button">#e65858</color>
     <color name="pr_merged_button">#8558e6</color>
+    <color name="pr_draft_button">#98a4b3</color>
 
     <color name="fab">#89f05c</color>
-    <color name="fab_pressed">#5aa03d</color>
 
     <color name="tab_indicator_color">#fff</color>
     <color name="drawer_scrim">#60000000</color>
@@ -38,12 +42,14 @@
 
     <color name="commit_addition">#65b345</color>
     <color name="commit_deletion">#b34545</color>
+    <color name="code_background">#30aaaaaa</color>
 
     <color name="drawer_background">@color/background_floating_material_light</color>
-    <color name="webview_background">#f7f7f9</color>
     <color name="list_background">@android:color/white</color>
     <color name="icon_foreground">#99343434</color>
     <color name="breadcrumb_background">#7baa67</color>
 
     <color name="octodroid">#97C03E</color>
+    <!-- Equal to primary, but not overridden in night mode -->
+    <color name="launcher_bg">#65b345</color>
 </resources>

@@ -1,11 +1,15 @@
 package com.gh4a.fragment;
 
 import android.os.Bundle;
+
+import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.fragment.app.Fragment;
 import androidx.fragment.app.FragmentManager;
 import androidx.fragment.app.FragmentTransaction;
 import androidx.appcompat.widget.SearchView;
+import androidx.lifecycle.Lifecycle;
+
 import android.text.TextUtils;
 import android.util.SparseArray;
 import android.view.LayoutInflater;
@@ -113,8 +117,8 @@ public class RepositoryListContainerFragment extends Fragment implements
     }
 
     @Override
-    public void onActivityCreated(@Nullable Bundle savedInstanceState) {
-        super.onActivityCreated(savedInstanceState);
+    public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
+        super.onViewCreated(view, savedInstanceState);
 
         FragmentManager fm = getChildFragmentManager();
         mMainFragment = (PagedDataBaseFragment<Repository>) fm.findFragmentByTag("main");
@@ -183,11 +187,14 @@ public class RepositoryListContainerFragment extends Fragment implements
 
     private void applyFilterTypeAndSortOrder() {
         if (!isAdded()) {
-            // we'll do this in onActivityCreated()
+            // we'll do this in onViewCreated()
             return;
         }
 
         switch (mFilterType) {
+            case "starred":
+                mMainFragment = StarredRepositoryListFragment.newInstance(mUserLogin);
+                break;
             case "watched":
                 mMainFragment = WatchedRepositoryListFragment.newInstance(mUserLogin);
                 break;
@@ -222,13 +229,13 @@ public class RepositoryListContainerFragment extends Fragment implements
     }
 
     private void addSearchFragment() {
-        FragmentTransaction ft = getChildFragmentManager().beginTransaction();
-
         mSearchFragment = RepositorySearchFragment.newInstance(mUserLogin);
-        mSearchFragment.setUserVisibleHint(false);
-        ft.add(R.id.details, mSearchFragment, "search");
-        ft.hide(mSearchFragment);
-        ft.commit();
+
+        getChildFragmentManager().beginTransaction()
+                .add(R.id.details, mSearchFragment, "search")
+                .hide(mSearchFragment)
+                .setMaxLifecycle(mSearchFragment, Lifecycle.State.STARTED)
+                .commit();
     }
 
     @Override
@@ -276,8 +283,6 @@ public class RepositoryListContainerFragment extends Fragment implements
     private void setSearchVisibility(boolean visible) {
         String hiddenTag = visible ? "main" : "search";
         String visibleTag = visible ? "search" : "main";
-        FragmentManager fm = getChildFragmentManager();
-        FragmentTransaction ft = fm.beginTransaction();
 
         mSearchVisible = visible;
         if (mFilterItem != null) {
@@ -285,10 +290,13 @@ public class RepositoryListContainerFragment extends Fragment implements
         }
 
         mSearchFragment.setQuery(null);
-        mSearchFragment.setUserVisibleHint(visible);
-        ft.hide(fm.findFragmentByTag(hiddenTag));
-        ft.show(fm.findFragmentByTag(visibleTag));
-        ft.commit();
+
+        final FragmentManager fm = getChildFragmentManager();
+        fm.beginTransaction()
+                .setMaxLifecycle(mSearchFragment, visible ? Lifecycle.State.RESUMED : Lifecycle.State.STARTED)
+                .hide(fm.findFragmentByTag(hiddenTag))
+                .show(fm.findFragmentByTag(visibleTag))
+                .commit();
     }
 
     @Override
@@ -360,6 +368,7 @@ public class RepositoryListContainerFragment extends Fragment implements
             FILTER_LOOKUP.put(R.id.filter_type_sources, "sources");
             FILTER_LOOKUP.put(R.id.filter_type_forks, "forks");
             FILTER_LOOKUP.put(R.id.filter_type_watched, "watched");
+            FILTER_LOOKUP.put(R.id.filter_type_starred, "starred");
         }
 
         public static FilterDrawerHelper create(String userLogin, boolean isOrg) {
@@ -422,7 +431,7 @@ public class RepositoryListContainerFragment extends Fragment implements
         }
 
         public int getMenuResId() {
-            return TextUtils.equals(mFilterType, "watched") ? 0 : R.menu.repo_sort;
+            return "watched".equals(mFilterType) || "starred".equals(mFilterType) ? 0 : R.menu.repo_sort;
         }
 
         public void selectSortType(Menu menu, String order, String direction,

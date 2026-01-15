@@ -7,20 +7,22 @@
     <attr name="colorIssueOpen" format="color" />
     <attr name="colorIssueClosed" format="color" />
     <attr name="colorPullRequestMerged" format="color" />
+    <attr name="colorPullRequestDraft" format="color" />
     <attr name="colorIssueOpenDark" format="color" />
     <attr name="colorIssueClosedDark" format="color" />
     <attr name="colorPullRequestMergedDark" format="color" />
+    <attr name="colorPullRequestDraftDark" format="color" />
     <attr name="colorIssueEditFab" format="reference" />
     <attr name="colorCommitAddition" format="color" />
     <attr name="colorCommitDeletion" format="color" />
     <attr name="colorFab" format="color" />
     <attr name="colorBreadcrumbBackground" format="color" />
-    <attr name="colorWebViewBackground" format="color" />
     <attr name="colorScrollbarThumb" format="color" />
     <attr name="colorDiffAddBackground" format="color" />
     <attr name="colorDiffRemoveBackground" format="color" />
     <attr name="colorDiffAddLineNumberBackground" format="color" />
     <attr name="colorDiffRemoveLineNumberBackground" format="color" />
+    <attr name="colorCodeBackground" format="color" />
     <attr name="colorIconForeground" format="color" />
 
     <attr name="maxHeight" format="dimension" />
@@ -30,21 +32,14 @@
         <attr name="badgeSpacing" format="dimension" />
     </declare-styleable>
 
-    <declare-styleable name="StyleableTextView">
-        <attr name="ghFont" format="enum">
-            <enum name="regular" value="0" />
-            <enum name="medium" value="1" />
-            <enum name="bold" value="2" />
-            <enum name="italic" value="3" />
-            <enum name="condensed" value="4" />
-            <enum name="boldCondensed" value="5" />
-        </attr>
+    <declare-styleable name="LinkHandlingTextView">
         <attr name="needsLinkHandling" format="boolean" />
     </declare-styleable>
 
     <declare-styleable name="IssueStateTrackingFloatingActionButton">
         <attr name="state_closed" format="boolean" />
         <attr name="state_merged" format="boolean" />
+        <attr name="state_draft" format="boolean" />
     </declare-styleable>
 
     <declare-styleable name="HeightLimitedLinearLayout">

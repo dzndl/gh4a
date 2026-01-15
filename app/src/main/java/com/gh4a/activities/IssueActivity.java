@@ -15,22 +15,30 @@
  */
 package com.gh4a.activities;
 
-import android.app.Activity;
+import android.app.Dialog;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Parcelable;
+
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
-import androidx.annotation.StringRes;
+
+import com.gh4a.adapter.ItemsWithDescriptionAdapter;
+import com.gh4a.utils.ActivityResultHelpers;
 import com.google.android.material.appbar.AppBarLayout;
 
+import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.view.ContextThemeWrapper;
 import androidx.coordinatorlayout.widget.CoordinatorLayout;
-import androidx.fragment.app.Fragment;
+import androidx.fragment.app.DialogFragment;
 import androidx.fragment.app.FragmentManager;
+
+import android.util.Pair;
 import android.view.LayoutInflater;
 import android.view.Menu;
 import android.view.MenuInflater;
@@ -49,21 +57,28 @@ import com.gh4a.utils.ApiHelpers;
 import com.gh4a.utils.IntentUtils;
 import com.gh4a.utils.RxUtils;
 import com.gh4a.utils.SingleFactory;
-import com.gh4a.utils.UiUtils;
 import com.gh4a.widget.BottomSheetCompatibleScrollingViewBehavior;
 import com.gh4a.widget.IssueStateTrackingFloatingActionButton;
 import com.meisolsson.githubsdk.model.Issue;
 import com.meisolsson.githubsdk.model.IssueState;
+import com.meisolsson.githubsdk.model.IssueStateReason;
 import com.meisolsson.githubsdk.model.request.issue.IssueRequest;
 import com.meisolsson.githubsdk.service.issues.IssueService;
 
+import java.util.List;
 import java.util.Locale;
 
 public class IssueActivity extends BaseActivity implements
         View.OnClickListener, ConfirmationDialogFragment.Callback {
+    public static Intent makeIntent(Context context, Issue issue) {
+        Pair<String, String> repoOwnerAndName = ApiHelpers.extractRepoOwnerAndNameFromIssue(issue);
+        return makeIntent(context, repoOwnerAndName.first, repoOwnerAndName.second, issue.number());
+    }
+
     public static Intent makeIntent(Context context, String login, String repoName, int number) {
         return makeIntent(context, login, repoName, number, null);
     }
+
     public static Intent makeIntent(Context context, String login, String repoName,
             int number, IntentUtils.InitialCommentMarker initialComment) {
         return new Intent(context, IssueActivity.class)
@@ -76,7 +91,12 @@ public class IssueActivity extends BaseActivity implements
     private static final int ID_LOADER_ISSUE = 0;
     private static final int ID_LOADER_COLLABORATOR_STATUS = 1;
 
-    private static final int REQUEST_EDIT_ISSUE = 1000;
+    private final ActivityResultLauncher<Intent> mEditIssueLauncher = registerForActivityResult(
+            new ActivityResultContracts.StartActivityForResult(),
+            new ActivityResultHelpers.ActivityResultSuccessCallback(() -> {
+                onRefresh();
+                setResult(RESULT_OK);
+            }));
 
     private Issue mIssue;
     private String mRepoOwner;
@@ -102,8 +122,6 @@ public class IssueActivity extends BaseActivity implements
         mHeader.setClickable(false);
         mHeader.setVisibility(View.GONE);
         addHeaderView(mHeader, false);
-
-        setFragment((IssueFragment) getSupportFragmentManager().findFragmentById(R.id.details));
 
         setToolbarScrollable(true);
         loadIssue(false);
@@ -141,17 +159,18 @@ public class IssueActivity extends BaseActivity implements
             return;
         }
         FragmentManager fm = getSupportFragmentManager();
-        IssueFragment newFragment = IssueFragment.newInstance(mRepoOwner, mRepoName,
-                mIssue, mIsCollaborator, mInitialComment);
-        if (mFragment != null) {
-            Fragment.SavedState state = fm.saveFragmentInstanceState(mFragment);
-            newFragment.setInitialSavedState(state);
+        var existingFragment = (IssueFragment) fm.findFragmentById(R.id.details);
+        if (existingFragment != null) {
+            setFragment(existingFragment);
+        } else {
+            IssueFragment newFragment = IssueFragment.newInstance(mRepoOwner, mRepoName,
+                    mIssue, mIsCollaborator, mInitialComment);
+            setFragment(newFragment);
+            fm.beginTransaction()
+                    .add(R.id.details, newFragment)
+                    .commitAllowingStateLoss();
+            mInitialComment = null;
         }
-        setFragment(newFragment);
-        fm.beginTransaction()
-                .replace(R.id.details, mFragment)
-                .commitAllowingStateLoss();
-        mInitialComment = null;
 
         updateHeader();
         updateFabVisibility();
@@ -225,9 +244,13 @@ public class IssueActivity extends BaseActivity implements
         int itemId = item.getItemId();
         switch (itemId) {
             case R.id.issue_close:
+                if (checkForAuthOrExit()) {
+                    showCloseReasonDialog();
+                }
+                return true;
             case R.id.issue_reopen:
                 if (checkForAuthOrExit()) {
-                    showOpenCloseConfirmDialog(itemId == R.id.issue_reopen);
+                    showReopenConfirmDialog();
                 }
                 return true;
             case R.id.share:
@@ -252,7 +275,7 @@ public class IssueActivity extends BaseActivity implements
         mIsCollaborator = null;
         setContentShown(false);
 
-        transitionHeaderToColor(R.attr.colorPrimary, R.attr.colorPrimaryDark);
+        transitionHeaderToColor(androidx.appcompat.R.attr.colorPrimary, androidx.appcompat.R.attr.colorPrimaryDark);
         mHeader.setVisibility(View.GONE);
 
         if (mFragment != null) {
@@ -282,46 +305,57 @@ public class IssueActivity extends BaseActivity implements
 
     @Override
     public void onConfirmed(String tag, Parcelable data) {
-        boolean reopen = ((Bundle) data).getBoolean("reopen");
-        updateIssueState(reopen);
+        reopenIssue();
     }
 
-    private void showOpenCloseConfirmDialog(final boolean reopen) {
-        @StringRes int messageResId = reopen
-                ? R.string.reopen_issue_confirm : R.string.close_issue_confirm;
-        @StringRes int buttonResId = reopen
-                ? R.string.pull_request_reopen : R.string.pull_request_close;
-
-        Bundle data = new Bundle();
-        data.putBoolean("reopen", reopen);
-        ConfirmationDialogFragment.show(this, messageResId, buttonResId, data, "reopenconfirm");
+    private void showReopenConfirmDialog() {
+        ConfirmationDialogFragment.show(this, R.string.reopen_issue_confirm,
+                R.string.pull_request_reopen, null, "reopenconfirm");
     }
 
-    private void updateIssueState(boolean reopen) {
+    private void showCloseReasonDialog() {
+        new CloseReasonDialogFragment().show(getSupportFragmentManager(), "close_reason");
+    }
+
+    private void reopenIssue() {
         IssueService service = ServiceFactory.get(IssueService.class, false);
         IssueRequest request = IssueRequest.builder()
-                .state(reopen ? IssueState.Open : IssueState.Closed)
+                .state(IssueState.Open)
                 .build();
-        @StringRes int dialogResId = reopen ? R.string.opening_msg : R.string.closing_msg;
-        @StringRes int errorMessageResId =
-                reopen ? R.string.issue_error_reopen : R.string.issue_error_close;
 
+        String failureMessage = getString(R.string.issue_error_reopen, mIssueNumber);
         service.editIssue(mRepoOwner, mRepoName, mIssueNumber, request)
                 .map(ApiHelpers::throwOnFailure)
-                .compose(RxUtils.wrapForBackgroundTask(this, dialogResId, getString(errorMessageResId, mIssueNumber)))
-                .subscribe(result -> {
-                    mIssue = result;
+                .compose(RxUtils.wrapForBackgroundTask(this, R.string.opening_msg, failureMessage))
+                .subscribe(this::updateUiAfterStateUpdate, error -> handleActionFailure("Reopening issue failed", error));
+    }
 
-                    updateHeader();
-                    if (mEditFab != null) {
-                        mEditFab.setState(mIssue.state());
-                    }
-                    if (mFragment != null) {
-                        mFragment.updateState(mIssue);
-                    }
-                    setResult(RESULT_OK);
-                    supportInvalidateOptionsMenu();
-                }, error -> handleActionFailure("Updating issue state failed", error));
+    private void closeIssue(IssueStateReason reason) {
+        IssueService service = ServiceFactory.get(IssueService.class, false);
+        IssueRequest request = IssueRequest.builder()
+                .state(IssueState.Closed)
+                .stateReason(reason)
+                .build();
+
+        String failureMessage = getString(R.string.issue_error_close, mIssueNumber);
+        service.editIssue(mRepoOwner, mRepoName, mIssueNumber, request)
+                .map(ApiHelpers::throwOnFailure)
+                .compose(RxUtils.wrapForBackgroundTask(this, R.string.closing_msg, failureMessage))
+                .subscribe(this::updateUiAfterStateUpdate, error -> handleActionFailure("Closing issue failed", error));
+    }
+
+    private void updateUiAfterStateUpdate(Issue updatedIssue) {
+        mIssue = updatedIssue;
+
+        updateHeader();
+        if (mEditFab != null) {
+            mEditFab.setState(mIssue.state());
+        }
+        if (mFragment != null) {
+            mFragment.updateState(mIssue);
+        }
+        setResult(RESULT_OK);
+        supportInvalidateOptionsMenu();
     }
 
     private void updateFabVisibility() {
@@ -360,19 +394,7 @@ public class IssueActivity extends BaseActivity implements
         if (v.getId() == R.id.edit_fab && checkForAuthOrExit()) {
             Intent editIntent = IssueEditActivity.makeEditIntent(this,
                     mRepoOwner, mRepoName, mIssue);
-            startActivityForResult(editIntent, REQUEST_EDIT_ISSUE);
-        }
-    }
-
-    @Override
-    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        if (requestCode == REQUEST_EDIT_ISSUE) {
-            if (resultCode == Activity.RESULT_OK) {
-                loadIssue(true);
-                setResult(RESULT_OK);
-            }
-        } else {
-            super.onActivityResult(requestCode, resultCode, data);
+            mEditIssueLauncher.launch(editIntent);
         }
     }
 
@@ -396,5 +418,45 @@ public class IssueActivity extends BaseActivity implements
                     showUiIfDone();
                     supportInvalidateOptionsMenu();
                 }, this::handleLoadFailure);
+    }
+
+    @Nullable
+    @Override
+    protected Uri getActivityUri() {
+        return IntentUtils.createBaseUriForRepo(mRepoOwner, mRepoName)
+                .appendPath("issues")
+                .appendPath(String.valueOf(mIssueNumber))
+                .build();
+    }
+
+    public static class CloseReasonDialogFragment extends DialogFragment {
+        @NonNull
+        @Override
+        public Dialog onCreateDialog(@Nullable Bundle savedInstanceState) {
+            var choiceItems = List.of(
+                    new ItemsWithDescriptionAdapter.Item(
+                            getString(R.string.issue_reason_completed),
+                            getString(R.string.issue_reason_completed_description)),
+                    new ItemsWithDescriptionAdapter.Item(
+                            getString(R.string.issue_reason_not_planned),
+                            getString(R.string.issue_reason_not_planned_description)),
+                    new ItemsWithDescriptionAdapter.Item(
+                            getString(R.string.issue_reason_duplicate),
+                            getString(R.string.issue_reason_duplicate_description))
+            );
+            var reasonForItems = List.of(IssueStateReason.Completed, IssueStateReason.NotPlanned, IssueStateReason.Duplicate);
+
+            IssueActivity activity = (IssueActivity) requireActivity();
+            return new AlertDialog.Builder(activity)
+                    .setTitle(R.string.close_issue_dialog_title)
+                    .setAdapter(
+                        new ItemsWithDescriptionAdapter(activity, choiceItems),
+                        (dialog, itemIndex) -> {
+                            activity.closeIssue(reasonForItems.get(itemIndex));
+                        }
+                    )
+                    .setNegativeButton(R.string.cancel, null)
+                    .create();
+        }
     }
 }

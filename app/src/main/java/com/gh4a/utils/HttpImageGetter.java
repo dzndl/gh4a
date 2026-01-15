@@ -26,29 +26,25 @@ import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
 import android.os.AsyncTask;
 import android.os.Handler;
-import androidx.annotation.NonNull;
-import androidx.core.content.ContextCompat;
-import androidx.appcompat.graphics.drawable.DrawableWrapper;
 import android.text.Html.ImageGetter;
 import android.text.Spanned;
 import android.text.TextUtils;
 import android.text.style.ImageSpan;
 import android.util.DisplayMetrics;
+import android.util.Log;
 import android.view.View;
 import android.view.WindowManager;
 import android.widget.TextView;
 
 import com.caverock.androidsvg.SVG;
-import com.caverock.androidsvg.SVGParseException;
+import com.gh4a.Gh4Application;
 import com.gh4a.R;
 import com.gh4a.ServiceFactory;
 import com.gh4a.fragment.SettingsFragment;
 
-import java.io.File;
-import java.io.FileDescriptor;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.RandomAccessFile;
 import java.lang.ref.WeakReference;
 import java.net.URLConnection;
 import java.util.ArrayList;
@@ -56,6 +52,9 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import androidx.annotation.NonNull;
+import androidx.appcompat.graphics.drawable.DrawableWrapperCompat;
+import androidx.core.content.ContextCompat;
 import okhttp3.HttpUrl;
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
@@ -124,7 +123,7 @@ public class HttpImageGetter {
         }
     }
 
-    private static class PlaceholderDrawable extends DrawableWrapper implements Runnable {
+    private static class PlaceholderDrawable extends DrawableWrapperCompat implements Runnable {
         private final String mUrl;
         private final ObjectInfo mInfo;
         private Drawable mLoadedImage;
@@ -149,7 +148,7 @@ public class HttpImageGetter {
 
         @Override
         public void run() {
-            setWrappedDrawable(mLoadedImage);
+            setDrawable(mLoadedImage);
             setBounds(0, 0, mLoadedImage.getIntrinsicWidth(), mLoadedImage.getIntrinsicHeight());
             mInfo.invalidateViewsForNewDrawable();
         }
@@ -186,7 +185,7 @@ public class HttpImageGetter {
                     }
                     mTask = new ImageGetterAsyncTask(HttpImageGetter.this, this);
                     mTask.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR,
-                            imagesToLoad.toArray(new PlaceholderDrawable[imagesToLoad.size()]));
+                            imagesToLoad.toArray(new PlaceholderDrawable[0]));
                 }
                 mHasStartedImageLoad = true;
             }
@@ -209,7 +208,7 @@ public class HttpImageGetter {
                 Drawable d = span.getDrawable();
                 if (d instanceof PlaceholderDrawable) {
                     PlaceholderDrawable phd = (PlaceholderDrawable) d;
-                    d = phd.getWrappedDrawable();
+                    d = phd.getDrawable();
                 }
                 if (d instanceof GifDrawable) {
                     GifDrawable gd = (GifDrawable) d;
@@ -324,36 +323,37 @@ public class HttpImageGetter {
 
     private final Handler mHandler = new Handler();
     private final Map<Object, ObjectInfo> mObjectInfos = new HashMap<>();
+    private final Drawable mGifPlaceholderDrawable;
     private final Drawable mLoadingDrawable;
     private final Drawable mErrorDrawable;
     private final OkHttpClient mClient;
 
     private final Context mContext;
 
-    private final File mCacheDir;
-
-    private final int mWidth;
-    private final int mHeight;
+    private final int mMaxWidth;
+    private final int mMaxHeight;
 
     private boolean mDestroyed;
 
     public HttpImageGetter(Context context) {
         mContext = context;
-        mCacheDir = context.getCacheDir();
         mClient = ServiceFactory.getImageHttpClient();
 
         WindowManager wm = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
         final Point size = new Point();
-
         wm.getDefaultDisplay().getSize(size);
-        mWidth = size.x;
-        mHeight = size.y;
+        mMaxWidth = size.x;
+        mMaxHeight = size.y;
+
+        mGifPlaceholderDrawable = ContextCompat.getDrawable(context, R.drawable.image_gif_placeholder);
+        mGifPlaceholderDrawable.setBounds(0, 0,
+                mGifPlaceholderDrawable.getIntrinsicWidth(), mGifPlaceholderDrawable.getIntrinsicHeight());
 
         mLoadingDrawable = ContextCompat.getDrawable(context, R.drawable.image_loading);
         mLoadingDrawable.setBounds(0, 0,
                 mLoadingDrawable.getIntrinsicWidth(), mLoadingDrawable.getIntrinsicHeight());
 
-        mErrorDrawable = ContextCompat.getDrawable(context, R.drawable.content_picture);
+        mErrorDrawable = ContextCompat.getDrawable(context, R.drawable.image_error);
         mErrorDrawable.setBounds(0, 0,
                 mErrorDrawable.getIntrinsicWidth(), mErrorDrawable.getIntrinsicHeight());
     }
@@ -441,14 +441,15 @@ public class HttpImageGetter {
         Bitmap bitmap = null;
 
         if (!mDestroyed && url != null) {
-            File output = null;
-            InputStream is = null;
             Request request = new Request.Builder()
                     .url(url)
                     .build();
             try (Response response = mClient.newCall(request).execute()) {
-                is = response.body().byteStream();
-                if (is != null) {
+                if (response.body() != null) {
+                    byte[] responseBody = response.body().bytes();
+                    // ByteArrayInputStream supports marking, which is required for
+                    // URLConnection.guessContentTypeFromStream to work
+                    InputStream is = new ByteArrayInputStream(responseBody);
                     MediaType mediaType = response.body().contentType();
                     String mime = mediaType != null ? mediaType.toString() : null;
                     if (mime == null) {
@@ -458,36 +459,25 @@ public class HttpImageGetter {
                         mime = URLConnection.guessContentTypeFromStream(is);
                     }
                     if (mime != null && mime.startsWith("image/svg")) {
-                        bitmap = renderSvgToBitmap(mContext.getResources(), is, mWidth, mHeight);
+                        bitmap = renderSvgToBitmap(mContext.getResources(), is);
                     } else {
                         boolean isGif = mime != null && mime.startsWith("image/gif");
-                        if (!isGif || canLoadGif()) {
-                            output = File.createTempFile("image", ".tmp", mCacheDir);
-                            if (FileUtils.save(output, is)) {
-                                if (isGif) {
-                                    GifDrawable d = new GifDrawable(output);
-                                    d.setBounds(0, 0, d.getIntrinsicWidth(), d.getIntrinsicHeight());
-                                    return d;
-                                } else {
-                                    bitmap = getBitmap(output, mWidth, mHeight);
-                                }
+                        if (isGif) {
+                            if (canLoadGif()) {
+                                GifDrawable d = new GifDrawable(responseBody);
+                                d.setBounds(0, 0, d.getIntrinsicWidth(), d.getIntrinsicHeight());
+                                return d;
+                            } else {
+                                return mGifPlaceholderDrawable;
                             }
+                        } else {
+                            bitmap = getBitmap(responseBody);
                         }
                     }
                 }
             } catch (IOException e) {
+                Log.e(Gh4Application.LOG_TAG, "Couldn't display image " + url, e);
                 // fall through to showing the error bitmap
-            } finally {
-                if (output != null) {
-                    output.delete();
-                }
-                if (is != null) {
-                    try {
-                        is.close();
-                    } catch (IOException e) {
-                        // ignored
-                    }
-                }
             }
         }
 
@@ -513,7 +503,7 @@ public class HttpImageGetter {
         int mode = prefs.getInt(SettingsFragment.KEY_GIF_LOADING, 1);
         switch (mode) {
             case 1: // load via Wifi
-                return !UiUtils.downloadNeedsWarning(mContext);
+                return !DownloadUtils.downloadNeedsWarning(mContext);
             case 2: // always load
                 return true;
             default:
@@ -521,45 +511,26 @@ public class HttpImageGetter {
         }
     }
 
-    private static Bitmap getBitmap(final File image, int width, int height) {
+    private Bitmap getBitmap(final byte[] image) {
         final BitmapFactory.Options options = new BitmapFactory.Options();
-        RandomAccessFile file = null;
+        options.inJustDecodeBounds = true;
+        BitmapFactory.decodeByteArray(image, 0, image.length, options);
 
-        try {
-            file = new RandomAccessFile(image.getAbsolutePath(), "r");
-            FileDescriptor fd = file.getFD();
-
-            options.inJustDecodeBounds = true;
-            BitmapFactory.decodeFileDescriptor(fd, null, options);
-
-            int scale = 1;
-            while (options.outWidth >= width || options.outHeight >= height) {
-                options.outWidth /= 2;
-                options.outHeight /= 2;
-                scale *= 2;
-            }
-
-            options.inJustDecodeBounds = false;
-            options.inDither = false;
-            options.inSampleSize = scale;
-
-            return BitmapFactory.decodeFileDescriptor(fd, null, options);
-        } catch (IOException e) {
-            return null;
-        } finally {
-            if (file != null) {
-                try {
-                    file.close();
-                } catch (IOException e) {
-                    // ignored
-                }
-            }
+        int scale = 1;
+        while (options.outWidth >= mMaxWidth) {
+            options.outWidth /= 2;
+            options.outHeight /= 2;
+            scale *= 2;
         }
+
+        options.inJustDecodeBounds = false;
+        options.inDither = false;
+        options.inSampleSize = scale;
+
+        return BitmapFactory.decodeByteArray(image, 0, image.length, options);
     }
 
-    private static Bitmap renderSvgToBitmap(Resources res, InputStream is,
-            int maxWidth, int maxHeight) {
-        //noinspection TryWithIdenticalCatches
+    private Bitmap renderSvgToBitmap(Resources res, InputStream is) {
         try {
             SVG svg = SVG.getFromInputStream(is);
             if (svg != null) {
@@ -570,18 +541,18 @@ public class HttpImageGetter {
                 if (docWidth < 0 || docHeight < 0) {
                     float aspectRatio = svg.getDocumentAspectRatio();
                     if (aspectRatio > 0) {
-                        float heightForAspect = (float) maxWidth / aspectRatio;
-                        float widthForAspect = (float) maxHeight * aspectRatio;
+                        float heightForAspect = (float) mMaxWidth / aspectRatio;
+                        float widthForAspect = (float) mMaxHeight * aspectRatio;
                         if (widthForAspect < heightForAspect) {
                             docWidth = Math.round(widthForAspect);
-                            docHeight = maxHeight;
+                            docHeight = mMaxHeight;
                         } else {
-                            docWidth = maxWidth;
+                            docWidth = mMaxWidth;
                             docHeight = Math.round(heightForAspect);
                         }
                     } else {
-                        docWidth = maxWidth;
-                        docHeight = maxHeight;
+                        docWidth = mMaxWidth;
+                        docHeight = mMaxHeight;
                     }
 
                     // we didn't take density into account anymore when calculating docWidth
@@ -590,7 +561,7 @@ public class HttpImageGetter {
                     density = null;
                 }
 
-                while (docWidth >= maxWidth || docHeight >= maxHeight) {
+                while (docWidth >= mMaxWidth) {
                     docWidth /= 2;
                     docHeight /= 2;
                     if (density != null) {
@@ -606,7 +577,7 @@ public class HttpImageGetter {
                 svg.renderToCanvas(canvas);
                 return bitmap;
             }
-        } catch (SVGParseException e) {
+        } catch (Exception e) {
             // fall through
         }
         return null;

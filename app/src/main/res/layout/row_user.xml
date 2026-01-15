@@ -20,7 +20,7 @@
         android:layout_marginRight="16dp"
         android:background="?attr/selectableItemBackgroundBorderless" />
 
-    <com.gh4a.widget.StyleableTextView
+    <TextView
         android:id="@+id/tv_title"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
@@ -28,6 +28,6 @@
         android:layout_gravity="center_vertical"
         android:layout_weight="1"
         android:textAppearance="@style/TextAppearance.ItemTitle"
-        app:ghFont="boldCondensed" />
+        android:textStyle="bold" />
 
 </LinearLayout>

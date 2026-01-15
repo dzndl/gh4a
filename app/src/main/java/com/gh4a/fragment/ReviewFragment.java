@@ -1,13 +1,16 @@
 package com.gh4a.fragment;
 
-import android.app.Activity;
 import android.content.Intent;
 import android.os.Bundle;
 import android.os.Parcelable;
+
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.Nullable;
 import androidx.annotation.StringRes;
 import androidx.coordinatorlayout.widget.CoordinatorLayout;
 import androidx.recyclerview.widget.RecyclerView;
+
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -20,9 +23,9 @@ import com.gh4a.activities.EditPullRequestCommentActivity;
 import com.gh4a.adapter.RootAdapter;
 import com.gh4a.adapter.timeline.TimelineItemAdapter;
 import com.gh4a.model.TimelineItem;
+import com.gh4a.utils.ActivityResultHelpers;
 import com.gh4a.utils.ApiHelpers;
 import com.gh4a.utils.IntentUtils;
-import com.gh4a.utils.Optional;
 import com.gh4a.utils.RxUtils;
 import com.gh4a.widget.EditorBottomSheet;
 
@@ -43,20 +46,26 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Optional;
 
 import io.reactivex.Single;
+import io.reactivex.schedulers.Schedulers;
 import retrofit2.Response;
 
 public class ReviewFragment extends ListDataBaseFragment<TimelineItem> implements
         TimelineItemAdapter.OnCommentAction, ConfirmationDialogFragment.Callback,
         EditorBottomSheet.Callback, EditorBottomSheet.Listener {
 
-    private static final int REQUEST_EDIT = 1000;
     private static final String EXTRA_SELECTED_REPLY_COMMENT_ID = "selected_reply_comment_id";
 
     @Nullable
     private TimelineItemAdapter mAdapter;
     private EditorBottomSheet mBottomSheet;
+
+    private final ActivityResultLauncher<Intent> mEditLauncher = registerForActivityResult(
+            new ActivityResultContracts.StartActivityForResult(),
+            new ActivityResultHelpers.ActivityResultSuccessCallback(() -> reloadComments(true))
+    );
 
     public static ReviewFragment newInstance(String repoOwner, String repoName, int issueNumber,
             Review review, IntentUtils.InitialCommentMarker mInitialComment) {
@@ -152,12 +161,12 @@ public class ReviewFragment extends ListDataBaseFragment<TimelineItem> implement
 
     @Override
     protected Single<List<TimelineItem>> onCreateDataSingle(boolean bypassCache) {
-        final PullRequestService prService = ServiceFactory.get(PullRequestService.class, bypassCache);
-        final PullRequestReviewService reviewService =
-                ServiceFactory.get(PullRequestReviewService.class, bypassCache);
-        final PullRequestReviewCommentService commentService =
-                ServiceFactory.get(PullRequestReviewCommentService.class, bypassCache);
+        var prService = ServiceFactory.getForFullPagedLists(PullRequestService.class, bypassCache);
+        var reviewService = ServiceFactory.getForFullPagedLists(PullRequestReviewService.class, bypassCache);
+        var commentService = ServiceFactory.getForFullPagedLists(PullRequestReviewCommentService.class, bypassCache);
 
+        // The Review object passed to this fragment may be incomplete, so we re-fetch it to make
+        // sure it has all the needed fields
         Single<TimelineItem.TimelineReview> reviewItemSingle =
                 reviewService.getReview(mRepoOwner, mRepoName, mIssueNumber, mReview.id())
                 .map(ApiHelpers::throwOnFailure)
@@ -165,7 +174,7 @@ public class ReviewFragment extends ListDataBaseFragment<TimelineItem> implement
 
         Single<List<ReviewComment>> reviewCommentsSingle = ApiHelpers.PageIterator
                 .toSingle(page -> reviewService.getReviewComments(
-                        mRepoOwner, mRepoName, mIssueNumber, mReview.id()))
+                        mRepoOwner, mRepoName, mIssueNumber, mReview.id(), page))
                 .compose(RxUtils.sortList(ApiHelpers.COMMENT_COMPARATOR))
                 .cache(); // single is used multiple times -> avoid refetching data
 
@@ -175,7 +184,7 @@ public class ReviewFragment extends ListDataBaseFragment<TimelineItem> implement
         Single<Optional<List<GitHubFile>>> filesSingle = hasCommentsSingle
                 .flatMap(hasComments -> {
                     if (!hasComments) {
-                        return Single.just(Optional.absent());
+                        return Single.just(Optional.empty());
                     }
                     return ApiHelpers.PageIterator
                             .toSingle(page -> prService.getPullRequestFiles(
@@ -186,7 +195,7 @@ public class ReviewFragment extends ListDataBaseFragment<TimelineItem> implement
         Single<Optional<List<ReviewComment>>> commentsSingle = hasCommentsSingle
                 .flatMap(hasComments -> {
                     if (!hasComments) {
-                        return Single.just(Optional.absent());
+                        return Single.just(Optional.empty());
                     }
                     return ApiHelpers.PageIterator
                             .toSingle(page -> commentService.getPullRequestComments(
@@ -195,7 +204,11 @@ public class ReviewFragment extends ListDataBaseFragment<TimelineItem> implement
                             .map(Optional::of);
                 });
 
-        return Single.zip(reviewItemSingle, reviewCommentsSingle, filesSingle, commentsSingle,
+        return Single.zip(
+                reviewItemSingle.subscribeOn(Schedulers.io()),
+                reviewCommentsSingle.subscribeOn(Schedulers.io()),
+                filesSingle.subscribeOn(Schedulers.io()),
+                commentsSingle.subscribeOn(Schedulers.io()),
                 (reviewItem, reviewComments, filesOpt, commentsOpt) -> {
             if (!reviewComments.isEmpty()) {
                 HashMap<String, GitHubFile> filesByName = new HashMap<>();
@@ -213,14 +226,19 @@ public class ReviewFragment extends ListDataBaseFragment<TimelineItem> implement
 
                 if (commentsOpt.isPresent()) {
                     for (ReviewComment commitComment : commentsOpt.get()) {
-                        if (reviewComments.contains(commitComment)) {
-                            continue;
+                        boolean alreadyPresent = false;
+                        for (ReviewComment reviewComment : reviewComments) {
+                            if (commitComment.id().equals(reviewComment.id())) {
+                                alreadyPresent = true;
+                                break;
+                            }
                         }
-
-                        // Rest of the comments should be added only if they are under the same
-                        // diff hunks as the original review comments.
-                        GitHubFile file = filesByName.get(commitComment.path());
-                        reviewItem.addComment(commitComment, file, false);
+                        if (!alreadyPresent) {
+                            // Rest of the comments should be added only if they are under the same
+                            // diff hunks as the original review comments.
+                            GitHubFile file = filesByName.get(commitComment.path());
+                            reviewItem.addComment(commitComment, file, false);
+                        }
                     }
                 }
             }
@@ -318,17 +336,6 @@ public class ReviewFragment extends ListDataBaseFragment<TimelineItem> implement
         mInitialComment = null;
     }
 
-    @Override
-    public void onActivityResult(int requestCode, int resultCode, Intent data) {
-        if (requestCode == REQUEST_EDIT) {
-            if (resultCode == Activity.RESULT_OK) {
-                reloadComments(true);
-            }
-        } else {
-            super.onActivityResult(requestCode, resultCode, data);
-        }
-    }
-
     private void reloadComments( boolean alsoClearCaches) {
         if (mAdapter != null && !alsoClearCaches) {
             // Don't clear adapter's cache, we're only interested in the new event
@@ -354,7 +361,7 @@ public class ReviewFragment extends ListDataBaseFragment<TimelineItem> implement
                     mIssueNumber, comment.id(), comment.body(), 0);
         }
 
-        startActivityForResult(intent, REQUEST_EDIT);
+        mEditLauncher.launch(intent);
     }
 
     @Override
@@ -409,7 +416,7 @@ public class ReviewFragment extends ListDataBaseFragment<TimelineItem> implement
     @Override
     public Single<List<Reaction>> loadReactionDetails(final GitHubCommentBase comment,
             boolean bypassCache) {
-        final ReactionService service = ServiceFactory.get(ReactionService.class, bypassCache);
+        var service = ServiceFactory.getForFullPagedLists(ReactionService.class, bypassCache);
         return ApiHelpers.PageIterator
                 .toSingle(page -> comment instanceof ReviewComment
                         ? service.getPullRequestReviewCommentReactions(
@@ -425,7 +432,18 @@ public class ReviewFragment extends ListDataBaseFragment<TimelineItem> implement
         final Single<Response<Reaction>> responseSingle = comment instanceof ReviewComment
                 ? service.createPullRequestReviewCommentReaction(mRepoOwner, mRepoName, comment.id(), request)
                 : service.createIssueCommentReaction(mRepoOwner, mRepoName, comment.id(), request);
-        return responseSingle.map(ApiHelpers::throwOnFailure);
+        return responseSingle.map(ApiHelpers::throwOnFailure)
+                .compose(RxUtils.wrapWithErrorSnackbar(getBaseActivity(), R.string.add_reaction_error));
+    }
+
+    @Override
+    public Single<Boolean> deleteReaction(GitHubCommentBase comment, long reactionId) {
+        final ReactionService service = ServiceFactory.get(ReactionService.class, false);
+        final Single<Response<Void>> responseSingle = comment instanceof ReviewComment
+                ? service.deletePullRequestReviewCommentReaction(mRepoOwner, mRepoName, comment.id(), reactionId)
+                : service.deleteIssueCommentReaction(mRepoOwner, mRepoName, comment.id(), reactionId);
+        return responseSingle.map(ApiHelpers::mapToTrueOnSuccess)
+                .compose(RxUtils.wrapWithErrorSnackbar(getBaseActivity(), R.string.remove_reaction_error));
     }
 
     @Override

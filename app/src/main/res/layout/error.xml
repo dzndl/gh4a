@@ -2,6 +2,7 @@
 <LinearLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
     android:id="@+id/error"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
@@ -13,11 +14,12 @@
         android:layout_gravity="center_horizontal"
         android:src="@drawable/load_failed_bg" />
 
-    <com.gh4a.widget.StyleableTextView
+    <com.gh4a.widget.LinkHandlingTextView
         android:id="@+id/error_message"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:autoLink="web"
+        app:needsLinkHandling="true"
         android:gravity="center_horizontal|top"
         android:paddingBottom="8dp"
         android:paddingLeft="16dp"
@@ -26,20 +28,23 @@
         android:textColor="?android:attr/textColorSecondary"
         android:textSize="16sp" />
 
-    <com.gh4a.widget.StyleableTextView
+    <Button
         android:id="@+id/retry_button"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="center_horizontal"
-        android:background="?attr/selectableItemBackgroundBorderless"
-        android:paddingBottom="8dp"
-        android:paddingLeft="16dp"
-        android:paddingRight="16dp"
-        android:paddingTop="8dp"
         android:text="@string/try_again"
-        android:textAllCaps="true"
-        android:textColor="?attr/colorAccent"
-        app:ghFont="medium" />
+        style="@style/Widget.MaterialComponents.Button.TextButton" />
+
+    <Button
+        android:id="@+id/report_button"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_horizontal"
+        android:visibility="gone"
+        android:text="@string/report_issue"
+        style="@style/Widget.MaterialComponents.Button.TextButton"
+        tools:visibility="visible" />
 
     <View
         android:layout_width="match_parent"

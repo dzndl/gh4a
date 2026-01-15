@@ -37,17 +37,19 @@ import com.gh4a.ApiRequestException;
 import com.gh4a.R;
 import com.gh4a.ServiceFactory;
 import com.gh4a.utils.ApiHelpers;
+import com.gh4a.utils.DownloadUtils;
 import com.gh4a.utils.FileUtils;
+import com.gh4a.utils.HtmlUtils;
 import com.gh4a.utils.IntentUtils;
-import com.gh4a.utils.Optional;
 import com.gh4a.utils.StringUtils;
-import com.gh4a.utils.UiUtils;
 import com.meisolsson.githubsdk.model.ClientErrorResponse;
 import com.meisolsson.githubsdk.model.Content;
 import com.meisolsson.githubsdk.model.TextMatch;
 import com.meisolsson.githubsdk.service.repositories.RepositoryContentService;
 
 import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
 
 import io.reactivex.Single;
 
@@ -152,8 +154,9 @@ public class FileViewerActivity extends WebViewerActivity
                     ";base64," + base64Data;
             return highlightImage(imageUrl, cssTheme, title);
         } else if (base64Data != null && FileUtils.isMarkdown(mPath) && !mViewRawText) {
+            String folderPath = FileUtils.getFolderPath(mPath);
             return generateMarkdownHtml(base64Data,
-                    mRepoOwner, mRepoName, mRef, cssTheme, addTitleHeader);
+                    mRepoOwner, mRepoName, mRef, folderPath, cssTheme, addTitleHeader);
         } else {
             String data = base64Data != null ? StringUtils.fromBase64(base64Data) : "";
             findMatchingLines(data);
@@ -235,9 +238,8 @@ public class FileViewerActivity extends WebViewerActivity
                 IntentUtils.launchBrowser(this, url);
                 return true;
             case R.id.download:
-                UiUtils.enqueueDownloadWithPermissionCheck(this, buildRawFileUrl(),
-                        FileUtils.getMimeTypeFor(mPath), FileUtils.getFileName(mPath), null, null);
-
+                DownloadUtils.enqueueDownloadWithPermissionCheck(this, buildRawFileUrl(),
+                        FileUtils.getMimeTypeFor(mPath), FileUtils.getFileName(mPath), null);
                 return true;
             case R.id.share:
                 IntentUtils.share(this, getString(R.string.share_file_subject,
@@ -245,7 +247,7 @@ public class FileViewerActivity extends WebViewerActivity
                 return true;
             case MENU_ITEM_HISTORY:
                 startActivity(CommitHistoryActivity.makeIntent(this,
-                        mRepoOwner, mRepoName, mRef, mPath, false));
+                        mRepoOwner, mRepoName, mRef, mPath, mContent != null ? mContent.type() : null, false));
                 return true;
             case R.id.view_raw:
                 mViewRawText = !mViewRawText;
@@ -328,14 +330,13 @@ public class FileViewerActivity extends WebViewerActivity
     private static String highlightImage(String imageUrl, String cssTheme, String title) {
         StringBuilder content = new StringBuilder();
         content.append("<html><head>");
-        writeCssInclude(content, "text", cssTheme);
+        HtmlUtils.writeCssInclude(content, "markdown", cssTheme);
         content.append("</head><body>");
         if (title != null) {
             content.append("<h2>").append(title).append("</h2>");
         }
-        content.append("<div class='image'>");
         content.append("<img src='").append(imageUrl).append("' />");
-        content.append("</div></body></html>");
+        content.append("</body></html>");
         return content.toString();
     }
 
@@ -353,7 +354,7 @@ public class FileViewerActivity extends WebViewerActivity
                             for (ClientErrorResponse.FieldError fe : errors) {
                                 if (fe.reason() == ClientErrorResponse.FieldError.Reason.TooLarge) {
                                     openUnsuitableFileAndFinish();
-                                    return Single.just(Optional.absent());
+                                    return Single.just(Optional.empty());
                                 }
                             }
                         }
@@ -364,8 +365,16 @@ public class FileViewerActivity extends WebViewerActivity
                 .subscribe(result -> {
                     if (result.isPresent()) {
                         mContent = result.get();
-                        onDataReady();
-                        setContentEmpty(false);
+                        // When file size is >1 and <100 MB, the GH API endpoint returns a successful response
+                        // but does not include the file contents in the response payload.
+                        // See https://docs.github.com/en/rest/repos/contents#get-repository-content
+                        boolean fileContentIsMissing = mContent.size() > 0 && Objects.equals(mContent.content(), "");
+                        if (fileContentIsMissing) {
+                            openUnsuitableFileAndFinish();
+                        } else {
+                            onDataReady();
+                            setContentEmpty(false);
+                        }
                     } else {
                         setContentEmpty(true);
                         setContentShown(true);

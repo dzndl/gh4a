@@ -19,7 +19,13 @@ import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Bundle;
+
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.recyclerview.widget.RecyclerView;
+
+import android.os.Handler;
+import android.os.Looper;
 import android.view.ContextMenu;
 import android.view.LayoutInflater;
 import android.view.Menu;
@@ -32,11 +38,11 @@ import com.gh4a.activities.CommitHistoryActivity;
 import com.gh4a.adapter.FileAdapter;
 import com.gh4a.adapter.RootAdapter;
 import com.gh4a.utils.ApiHelpers;
+import com.gh4a.utils.DownloadUtils;
 import com.gh4a.utils.FileUtils;
 import com.gh4a.utils.IntentUtils;
 import com.gh4a.utils.RxUtils;
 import com.gh4a.utils.StringUtils;
-import com.gh4a.utils.UiUtils;
 import com.gh4a.widget.ContextMenuAwareRecyclerView;
 import com.meisolsson.githubsdk.model.Commit;
 import com.meisolsson.githubsdk.model.Content;
@@ -54,9 +60,12 @@ import io.reactivex.Single;
 
 public class ContentListFragment extends ListDataBaseFragment<Content> implements
         RootAdapter.OnItemClickListener<Content> {
-    private static final int MENU_HISTORY = Menu.FIRST + 1;
-    private static final int MENU_DOWNLOAD = Menu.FIRST + 2;
-    private static final int REQUEST_FILE_HISTORY = 1000;
+    public interface ParentCallback {
+        void onContentsLoaded(ContentListFragment fragment, List<Content> contents);
+        void onTreeSelected(Content content);
+        void onCommitSelected(Commit commit);
+        Set<String> getSubModuleNames(ContentListFragment fragment);
+    }
 
     private static final Comparator<Content> COMPARATOR = (lhs, rhs) -> {
         boolean lhsIsDir = lhs.type() == ContentType.Directory;
@@ -78,15 +87,22 @@ public class ContentListFragment extends ListDataBaseFragment<Content> implement
     private String mPath;
     private String mRef;
 
+    private final Handler mHandler = new Handler(Looper.getMainLooper());
     private ParentCallback mCallback;
     private FileAdapter mAdapter;
 
-    public interface ParentCallback {
-        void onContentsLoaded(ContentListFragment fragment, List<Content> contents);
-        void onTreeSelected(Content content);
-        void onCommitSelected(Commit commit);
-        Set<String> getSubModuleNames(ContentListFragment fragment);
-    }
+    private final ActivityResultLauncher<Intent> mFileHistoryLauncher = registerForActivityResult(
+            new ActivityResultContracts.StartActivityForResult(),
+            result -> {
+                if (result.getResultCode() == Activity.RESULT_OK) {
+                    final Commit commit = result.getData().getParcelableExtra("commit");
+                    // This function is invoked while the fragment is transitioned to the STARTED
+                    // state, which means the fragment manager is busy at that point. Since the
+                    // callback ultimately ends up doing fragment transactions as well, defer it
+                    // to a later point.
+                    mHandler.post(() -> mCallback.onCommitSelected(commit));
+                }
+            });
 
     public static ContentListFragment newInstance(Repository repository,
             String path, ArrayList<Content> contents, String ref) {
@@ -149,16 +165,14 @@ public class ContentListFragment extends ListDataBaseFragment<Content> implement
     public void onCreateContextMenu(ContextMenu menu, View v, ContextMenu.ContextMenuInfo menuInfo) {
         super.onCreateContextMenu(menu, v, menuInfo);
 
-        ContextMenuAwareRecyclerView.RecyclerContextMenuInfo info =
-                (ContextMenuAwareRecyclerView.RecyclerContextMenuInfo) menuInfo;
+        var info = (ContextMenuAwareRecyclerView.RecyclerContextMenuInfo) menuInfo;
         Content contents = mAdapter.getItemFromAdapterPosition(info.position);
         Set<String> subModules = mCallback.getSubModuleNames(this);
+        boolean isSubModule = subModules.contains(contents.name());
 
-        if (subModules == null || !subModules.contains(contents.name())) {
-            menu.add(Menu.NONE, MENU_HISTORY, Menu.NONE, R.string.history);
-        }
-        if (contents.type() == ContentType.File) {
-            menu.add(Menu.NONE, MENU_DOWNLOAD, Menu.NONE, R.string.download);
+        menu.add(Menu.NONE, R.id.history, Menu.NONE, R.string.history);
+        if (contents.type() == ContentType.File && !isSubModule) {
+            menu.add(Menu.NONE, R.id.download, Menu.NONE, R.string.download);
         }
     }
 
@@ -173,32 +187,22 @@ public class ContentListFragment extends ListDataBaseFragment<Content> implement
         Content contents = mAdapter.getItemFromAdapterPosition(info.position);
 
         switch (item.getItemId()) {
-            case MENU_HISTORY:
+            case R.id.history:
                 Intent intent = CommitHistoryActivity.makeIntent(getActivity(),
                         mRepository.owner().login(), mRepository.name(),
-                        mRef, contents.path(), true);
-                startActivityForResult(intent, REQUEST_FILE_HISTORY);
+                        mRef, contents.path(), contents.type(), true);
+                mFileHistoryLauncher.launch(intent);
                 return true;
-            case MENU_DOWNLOAD:
+            case R.id.download:
                 String url = IntentUtils.createRawFileUrl(mRepository.owner().login(),
                         mRepository.name(), mRef, contents.path());
-                UiUtils.enqueueDownloadWithPermissionCheck(getBaseActivity(),
+                DownloadUtils.enqueueDownloadWithPermissionCheck(getBaseActivity(),
                         url, FileUtils.getMimeTypeFor(contents.name()),
-                        contents.name(), null, null);
+                        contents.name(), null);
                 return true;
         }
 
         return super.onContextItemSelected(item);
-    }
-
-    @Override
-    public void onActivityResult(int requestCode, int resultCode, Intent data) {
-        if (requestCode == REQUEST_FILE_HISTORY && resultCode == Activity.RESULT_OK) {
-            Commit commit = data.getParcelableExtra("commit");
-            mCallback.onCommitSelected(commit);
-        } else {
-            super.onActivityResult(requestCode, resultCode, data);
-        }
     }
 
     public String getPath() {

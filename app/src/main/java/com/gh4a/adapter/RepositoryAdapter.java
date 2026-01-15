@@ -26,6 +26,7 @@ import android.widget.Filterable;
 import android.widget.TextView;
 
 import com.gh4a.R;
+import com.gh4a.utils.ApiHelpers;
 import com.gh4a.utils.StringUtils;
 import com.meisolsson.githubsdk.model.Repository;
 import com.vdurmont.emoji.EmojiParser;
@@ -46,12 +47,11 @@ public class RepositoryAdapter extends RootAdapter<Repository, RepositoryAdapter
 
     @Override
     public void onBindViewHolder(ViewHolder holder, Repository repository) {
-        holder.tvTitle.setText(repository.owner().login() + "/" + repository.name());
+        holder.tvTitle.setText(ApiHelpers.formatRepoName(mContext, repository));
 
         if (!StringUtils.isBlank(repository.description())) {
             holder.tvDesc.setVisibility(View.VISIBLE);
-            holder.tvDesc.setText(
-                    EmojiParser.parseToUnicode(StringUtils.doTeaser(repository.description())));
+            holder.tvDesc.setText(EmojiParser.parseToUnicode(repository.description()));
         } else {
             holder.tvDesc.setVisibility(View.GONE);
         }

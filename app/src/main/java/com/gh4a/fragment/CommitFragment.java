@@ -6,6 +6,7 @@ import android.os.Bundle;
 import android.text.SpannableStringBuilder;
 import android.text.TextUtils;
 import android.text.style.ForegroundColorSpan;
+import android.text.style.StrikethroughSpan;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.View.OnClickListener;
@@ -14,18 +15,21 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
+
 import com.gh4a.Gh4Application;
 import com.gh4a.R;
 import com.gh4a.activities.CommitDiffViewerActivity;
 import com.gh4a.activities.FileViewerActivity;
 import com.gh4a.activities.UserActivity;
+import com.gh4a.utils.ActivityResultHelpers;
 import com.gh4a.utils.ApiHelpers;
 import com.gh4a.utils.AvatarHandler;
 import com.gh4a.utils.FileUtils;
 import com.gh4a.utils.IntentUtils;
 import com.gh4a.utils.StringUtils;
 import com.gh4a.utils.UiUtils;
-import com.gh4a.widget.StyleableTextView;
 import com.meisolsson.githubsdk.model.Commit;
 import com.meisolsson.githubsdk.model.GitHubFile;
 import com.meisolsson.githubsdk.model.PositionalCommentBase;
@@ -47,11 +51,12 @@ public class CommitFragment extends LoadingFragmentBase implements OnClickListen
         args.putString("owner", repoOwner);
         args.putString("repo", repoName);
         args.putString("sha", commitSha);
-        // Commit objects can be huge, depending on the number of patches attached to it.
+        // Commits can be huge, depending on the number of patches attached to it,
+        // and can potentially have a very high number of comments.
         // In order to avoid TransactionTooLargeExceptions being thrown when the activity we're
-        // attached to is recreated, store the data in compressed form
-        IntentUtils.putParcelableToBundleCompressed(args, "commit", commit, 100000);
-        args.putParcelableArrayList("comments", new ArrayList<>(comments));
+        // attached to is stopped, store the data in compressed form.
+        IntentUtils.putCompressedValueToBundle(args, "commit", commit);
+        IntentUtils.putCompressedValueToBundle(args, "comments", comments);
         f.setArguments(args);
         return f;
     }
@@ -60,14 +65,21 @@ public class CommitFragment extends LoadingFragmentBase implements OnClickListen
         void onCommentsUpdated();
     }
 
-    private static final int REQUEST_DIFF_VIEWER = 1000;
-
     private String mRepoOwner;
     private String mRepoName;
     private String mObjectSha;
     private Commit mCommit;
     private List<GitComment> mComments;
     protected View mContentView;
+
+    private final ActivityResultLauncher<Intent> mDiffViewerLauncher = registerForActivityResult(
+            new ActivityResultContracts.StartActivityForResult(),
+            new ActivityResultHelpers.ActivityResultSuccessCallback(() -> {
+                // reload comments
+                if (getActivity() instanceof CommentUpdateListener) {
+                    ((CommentUpdateListener) getActivity()).onCommentsUpdated();
+                }
+            }));
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -76,8 +88,8 @@ public class CommitFragment extends LoadingFragmentBase implements OnClickListen
         mRepoOwner = args.getString("owner");
         mRepoName = args.getString("repo");
         mObjectSha = args.getString("sha");
-        mCommit = IntentUtils.readCompressedParcelableFromBundle(args, "commit");
-        mComments = args.getParcelableArrayList("comments");
+        mCommit = IntentUtils.readCompressedValueFromBundle(args, "commit");
+        mComments = IntentUtils.readCompressedValueFromBundle(args, "comments");
     }
 
     @Override
@@ -156,8 +168,7 @@ public class CommitFragment extends LoadingFragmentBase implements OnClickListen
 
         if (!ApiHelpers.authorEqualsCommitter(mCommit)) {
             ImageView commitGravatar = mContentView.findViewById(R.id.iv_commit_gravatar);
-            StyleableTextView commitExtra =
-                    mContentView.findViewById(R.id.tv_commit_extra);
+            TextView commitExtra = mContentView.findViewById(R.id.tv_commit_extra);
 
             AvatarHandler.assignAvatar(commitGravatar, mCommit.committer());
             String committerText = getString(R.string.commit_details,
@@ -176,73 +187,54 @@ public class CommitFragment extends LoadingFragmentBase implements OnClickListen
         LinearLayout llAdded = mContentView.findViewById(R.id.ll_added);
         LinearLayout llRenamed = mContentView.findViewById(R.id.ll_renamed);
         LinearLayout llDeleted = mContentView.findViewById(R.id.ll_deleted);
-        final LayoutInflater inflater = getLayoutInflater();
-        int added = 0, changed = 0, renamed = 0, deleted = 0;
-        int additions = 0, deletions = 0;
-        int count = files != null ? files.size() : 0;
-        int highlightColor = UiUtils.resolveColor(getActivity(), android.R.attr.textColorPrimary);
-        ForegroundColorSpan addSpan = new ForegroundColorSpan(
-                UiUtils.resolveColor(getActivity(), R.attr.colorCommitAddition));
-        ForegroundColorSpan deleteSpan = new ForegroundColorSpan(
-                UiUtils.resolveColor(getActivity(), R.attr.colorCommitDeletion));
-
         llChanged.removeAllViews();
         llAdded.removeAllViews();
         llRenamed.removeAllViews();
         llDeleted.removeAllViews();
 
-        for (int i = 0; i < count; i++) {
+        int addedFiles = 0, changedFiles = 0, renamedFiles = 0, deletedFiles = 0;
+        int totalAdditions = 0, totalDeletions = 0;
+        int filesCount = files != null ? files.size() : 0;
+        int highlightColor = UiUtils.resolveColor(getActivity(), android.R.attr.textColorPrimary);
+        ForegroundColorSpan additionsSpan = new ForegroundColorSpan(
+                UiUtils.resolveColor(getActivity(), R.attr.colorCommitAddition));
+        ForegroundColorSpan deletionsSpan = new ForegroundColorSpan(
+                UiUtils.resolveColor(getActivity(), R.attr.colorCommitDeletion));
+
+        for (int i = 0; i < filesCount; i++) {
             GitHubFile file = files.get(i);
             final LinearLayout parent;
 
             switch (file.status()) {
                 case "added":
                     parent = llAdded;
-                    added++;
+                    addedFiles++;
                     break;
                 case "modified":
                     parent = llChanged;
-                    changed++;
+                    changedFiles++;
                     break;
                 case "renamed":
                     parent = llRenamed;
-                    renamed++;
+                    renamedFiles++;
                     break;
                 case "removed":
                     parent = llDeleted;
-                    deleted++;
+                    deletedFiles++;
                     break;
                 default:
                     continue;
             }
 
-            additions += file.additions();
-            deletions += file.deletions();
+            totalAdditions += file.additions();
+            totalDeletions += file.deletions();
 
-            int commentCount = 0;
-            for (PositionalCommentBase comment : comments) {
-                if (TextUtils.equals(file.filename(), comment.path())) {
-                    commentCount++;
-                }
-            }
-
-            ViewGroup fileView = (ViewGroup) inflater.inflate(R.layout.commit_filename, parent, false);
+            View fileView = getLayoutInflater().inflate(R.layout.commit_filename, parent, false);
             TextView fileNameView = fileView.findViewById(R.id.filename);
-            fileNameView.setText(file.filename());
 
-            TextView statsView = fileView.findViewById(R.id.stats);
-            if (file.patch() != null) {
-                SpannableStringBuilder stats = new SpannableStringBuilder();
-                stats.append("+").append(String.valueOf(file.additions()));
-                int addLength = stats.length();
-                stats.setSpan(addSpan, 0, addLength, 0);
-                stats.append("\u00a0\u00a0\u00a0-").append(String.valueOf(file.deletions()));
-                stats.setSpan(deleteSpan, addLength, stats.length(), 0);
-                statsView.setText(stats);
-                statsView.setVisibility(View.VISIBLE);
-            } else {
-                statsView.setVisibility(View.GONE);
-            }
+            fillFileName(fileNameView, file);
+            fillFileStats(fileView, file, additionsSpan, deletionsSpan);
+            fillFileCommentsCount(fileView, file, comments);
 
             if (file.patch() != null ||
                     (parent != llDeleted && FileUtils.isImage(file.filename()))) {
@@ -250,23 +242,62 @@ public class CommitFragment extends LoadingFragmentBase implements OnClickListen
                 fileView.setOnClickListener(this);
                 fileView.setTag(file);
             }
-            if (commentCount > 0) {
-                TextView commentView = fileView.findViewById(R.id.comments);
-                commentView.setText(String.valueOf(commentCount));
-                commentView.setVisibility(View.VISIBLE);
-            }
 
             parent.addView(fileView);
         }
 
-        adjustVisibility(R.id.card_added, added);
-        adjustVisibility(R.id.card_changed, changed);
-        adjustVisibility(R.id.card_renamed, renamed);
-        adjustVisibility(R.id.card_deleted, deleted);
+        adjustVisibility(R.id.card_added, addedFiles);
+        adjustVisibility(R.id.card_changed, changedFiles);
+        adjustVisibility(R.id.card_renamed, renamedFiles);
+        adjustVisibility(R.id.card_deleted, deletedFiles);
 
         TextView tvSummary = mContentView.findViewById(R.id.tv_desc);
-        tvSummary.setText(getString(R.string.commit_summary, added + changed + renamed + deleted,
-                additions, deletions));
+        tvSummary.setText(getString(R.string.commit_summary,
+                addedFiles + changedFiles + renamedFiles + deletedFiles,
+                totalAdditions, totalDeletions));
+    }
+
+    private void fillFileName(TextView fileNameView, GitHubFile file) {
+        if (file.previousFilename() != null) {
+            SpannableStringBuilder fileNames = new SpannableStringBuilder();
+            fileNames.append(file.previousFilename()).append('\n').append(file.filename());
+            fileNames.setSpan(new StrikethroughSpan(), 0, file.previousFilename().length(), 0);
+            fileNameView.setText(fileNames);
+        } else {
+            fileNameView.setText(file.filename());
+        }
+    }
+
+    private void fillFileStats(View fileView, GitHubFile file, ForegroundColorSpan additionsSpan,
+            ForegroundColorSpan deletionsSpan) {
+        TextView statsView = fileView.findViewById(R.id.stats);
+        if (file.additions() > 0 || file.deletions() > 0) {
+            SpannableStringBuilder stats = new SpannableStringBuilder();
+            stats.append("+").append(String.valueOf(file.additions()));
+            int addLength = stats.length();
+            stats.setSpan(additionsSpan, 0, addLength, 0);
+            stats.append("\u00a0\u00a0\u00a0-").append(String.valueOf(file.deletions()));
+            stats.setSpan(deletionsSpan, addLength, stats.length(), 0);
+            statsView.setText(stats);
+            statsView.setVisibility(View.VISIBLE);
+        } else {
+            statsView.setVisibility(View.GONE);
+        }
+    }
+
+    private void fillFileCommentsCount(View fileView, GitHubFile file,
+            List<? extends PositionalCommentBase> comments) {
+        int commentCount = 0;
+        for (PositionalCommentBase comment : comments) {
+            if (TextUtils.equals(file.filename(), comment.path())) {
+                commentCount++;
+            }
+        }
+        if (commentCount > 0) {
+            TextView commentView = fileView.findViewById(R.id.comments);
+            commentView.setText(String.valueOf(commentCount));
+            commentView.setVisibility(View.VISIBLE);
+        }
     }
 
     private void adjustVisibility(int containerResId, int count) {
@@ -297,21 +328,7 @@ public class CommitFragment extends LoadingFragmentBase implements OnClickListen
                     mObjectSha, file.filename(), file.patch(),
                     commentsForFile(file), -1, -1, false, null);
         }
-        startActivityForResult(intent, REQUEST_DIFF_VIEWER);
-    }
-
-    @Override
-    public void onActivityResult(int requestCode, int resultCode, Intent data) {
-        if (requestCode == REQUEST_DIFF_VIEWER) {
-            if (resultCode == Activity.RESULT_OK) {
-                // reload comments
-                if (getActivity() instanceof CommentUpdateListener) {
-                    ((CommentUpdateListener) getActivity()).onCommentsUpdated();
-                }
-            }
-        } else {
-            super.onActivityResult(requestCode, resultCode, data);
-        }
+        mDiffViewerLauncher.launch(intent);
     }
 
     private ArrayList<GitComment> commentsForFile(GitHubFile file) {

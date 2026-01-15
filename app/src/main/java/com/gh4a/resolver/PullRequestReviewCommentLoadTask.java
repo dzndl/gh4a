@@ -2,6 +2,8 @@ package com.gh4a.resolver;
 
 import android.content.Context;
 import android.content.Intent;
+import android.net.Uri;
+
 import androidx.annotation.VisibleForTesting;
 import androidx.fragment.app.FragmentActivity;
 
@@ -10,7 +12,6 @@ import com.gh4a.activities.ReviewActivity;
 import com.gh4a.model.TimelineItem;
 import com.gh4a.utils.ApiHelpers;
 import com.gh4a.utils.IntentUtils;
-import com.gh4a.utils.Optional;
 import com.gh4a.utils.RxUtils;
 import com.meisolsson.githubsdk.model.Review;
 import com.meisolsson.githubsdk.model.ReviewComment;
@@ -19,6 +20,7 @@ import com.meisolsson.githubsdk.service.pull_request.PullRequestReviewService;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 
 import io.reactivex.Single;
 
@@ -32,9 +34,9 @@ public class PullRequestReviewCommentLoadTask extends UrlLoadTask {
     @VisibleForTesting
     protected final IntentUtils.InitialCommentMarker mMarker;
 
-    public PullRequestReviewCommentLoadTask(FragmentActivity activity, String repoOwner,
-            String repoName, int pullRequestNumber, IntentUtils.InitialCommentMarker marker) {
-        super(activity);
+    public PullRequestReviewCommentLoadTask(FragmentActivity activity, Uri urlToResolve,
+            String repoOwner, String repoName, int pullRequestNumber, IntentUtils.InitialCommentMarker marker) {
+        super(activity, urlToResolve);
         mRepoOwner = repoOwner;
         mRepoName = repoName;
         mPullRequestNumber = pullRequestNumber;
@@ -50,8 +52,7 @@ public class PullRequestReviewCommentLoadTask extends UrlLoadTask {
             int pullRequestNumber, IntentUtils.InitialCommentMarker marker) {
         final PullRequestReviewService reviewService =
                 ServiceFactory.get(PullRequestReviewService.class, false);
-        final PullRequestReviewCommentService commentService =
-                ServiceFactory.get(PullRequestReviewCommentService.class, false);
+        var commentService = ServiceFactory.getForFullPagedLists(PullRequestReviewCommentService.class, false);
 
         return ApiHelpers.PageIterator
                 .toSingle(page -> commentService.getPullRequestComments(
@@ -81,7 +82,7 @@ public class PullRequestReviewCommentLoadTask extends UrlLoadTask {
                                     .map(Optional::of);
                         }
                     }
-                    return Single.just(Optional.<Review>absent());
+                    return Single.just(Optional.<Review>empty());
                 })
                 .map(reviewOpt -> reviewOpt.map(review -> ReviewActivity.makeIntent(context,
                         repoOwner, repoName, pullRequestNumber, review, marker)));

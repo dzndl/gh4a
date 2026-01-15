@@ -3,7 +3,8 @@ package com.gh4a.resolver;
 import android.content.Intent;
 import androidx.annotation.VisibleForTesting;
 import androidx.fragment.app.FragmentActivity;
-import android.text.TextUtils;
+
+import android.net.Uri;
 import android.util.Pair;
 
 import com.gh4a.ApiRequestException;
@@ -11,12 +12,12 @@ import com.gh4a.ServiceFactory;
 import com.gh4a.activities.FileViewerActivity;
 import com.gh4a.activities.RepositoryActivity;
 import com.gh4a.utils.ApiHelpers;
-import com.gh4a.utils.Optional;
+import com.gh4a.utils.RxUtils;
 import com.meisolsson.githubsdk.model.Branch;
 import com.meisolsson.githubsdk.service.repositories.RepositoryBranchService;
 import com.meisolsson.githubsdk.service.repositories.RepositoryService;
 
-import java.util.List;
+import java.util.Optional;
 import java.util.regex.Pattern;
 
 import io.reactivex.Single;
@@ -37,9 +38,9 @@ public class RefPathDisambiguationTask extends UrlLoadTask {
     @VisibleForTesting
     protected final boolean mGoToFileViewer;
 
-    public RefPathDisambiguationTask(FragmentActivity activity, String repoOwner,
-            String repoName, String refAndPath, int initialPage) {
-        super(activity);
+    public RefPathDisambiguationTask(FragmentActivity activity, Uri urlToResolve,
+            String repoOwner, String repoName, String refAndPath, int initialPage) {
+        super(activity, urlToResolve);
         mRepoOwner = repoOwner;
         mRepoName = repoName;
         mRefAndPath = refAndPath;
@@ -48,9 +49,9 @@ public class RefPathDisambiguationTask extends UrlLoadTask {
         mGoToFileViewer = false;
     }
 
-    public RefPathDisambiguationTask(FragmentActivity activity, String repoOwner,
-            String repoName, String refAndPath, String fragment) {
-        super(activity);
+    public RefPathDisambiguationTask(FragmentActivity activity, Uri urlToResolve,
+            String repoOwner, String repoName, String refAndPath, String fragment) {
+        super(activity, urlToResolve);
         mRepoOwner = repoOwner;
         mRepoName = repoName;
         mRefAndPath = refAndPath;
@@ -61,10 +62,10 @@ public class RefPathDisambiguationTask extends UrlLoadTask {
 
     @Override
     protected Single<Optional<Intent>> getSingle() {
-        return resolve()
+        return resolveRefAndPath()
                 .map(refAndPathOpt -> {
                     if (!refAndPathOpt.isPresent()) {
-                        return Optional.absent();
+                        return Optional.empty();
                     }
                     Pair<String, String> refAndPath = refAndPathOpt.get();
                     if (mGoToFileViewer && refAndPath.second != null) {
@@ -92,58 +93,49 @@ public class RefPathDisambiguationTask extends UrlLoadTask {
                                 mRepoOwner, mRepoName, refAndPath.first,
                                 refAndPath.second, mInitialPage));
                     }
-                    return Optional.absent();
+                    return Optional.empty();
                 });
     }
 
-    private Single<Optional<Pair<String, String>>> matchBranch(Single<List<Branch>> input) {
-        return input.map(branches -> {
-            for (Branch branch : branches) {
-                if (TextUtils.equals(mRefAndPath, branch.name())) {
-                    return Optional.of(Pair.create(branch.name(), null));
-                } else {
-                    String nameWithSlash = branch.name() + "/";
-                    if (mRefAndPath.startsWith(nameWithSlash)) {
-                        return Optional.of(Pair.create(branch.name(),
-                                mRefAndPath.substring(nameWithSlash.length())));
-                    }
-                }
-            }
-            return Optional.absent();
-        });
-    }
-
     // returns ref, path
-    private Single<Optional<Pair<String, String>>> resolve() throws ApiRequestException {
+    private Single<Optional<Pair<String, String>>> resolveRefAndPath() throws ApiRequestException {
         // first check whether the path redirects to HEAD
         if (mRefAndPath.startsWith("HEAD")) {
             return Single.just(Optional.of(Pair.create("HEAD",
                     mRefAndPath.startsWith("HEAD/") ? mRefAndPath.substring(5) : null)));
         }
+        // or whether the ref is a commit SHA-1
+        int slashPos = mRefAndPath.indexOf('/');
+        String potentialSha = slashPos > 0 ? mRefAndPath.substring(0, slashPos) : mRefAndPath;
+        if (SHA1_PATTERN.matcher(potentialSha).matches()) {
+            return Single.just(Optional.of(Pair.create(potentialSha,
+                    slashPos > 0 ? mRefAndPath.substring(slashPos + 1) : "")));
+        }
 
-        final RepositoryBranchService branchService =
-                ServiceFactory.get(RepositoryBranchService.class, false);
-        final RepositoryService repoService = ServiceFactory.get(RepositoryService.class, false);
+        var branchService = ServiceFactory.getForFullPagedLists(RepositoryBranchService.class, false);
+        var repoService = ServiceFactory.getForFullPagedLists(RepositoryService.class, false);
 
         // then look for matching branches
         return ApiHelpers.PageIterator
-                .toSingle(page -> branchService.getBranches(mRepoOwner, mRepoName, page))
-                .compose(this::matchBranch)
+                .first(page -> branchService.getBranches(mRepoOwner, mRepoName, page), this::matchesUrlPath)
                 // and tags after that
-                .flatMap(result -> result.orOptionalSingle(() -> ApiHelpers.PageIterator
-                        .toSingle(page -> repoService.getTags(mRepoOwner, mRepoName, page))
-                        .compose(this::matchBranch))
-                )
-                .map(resultOpt -> resultOpt.orOptional(() -> {
-                    // at this point, the first item may still be a SHA1 - check with a simple regex
-                    int slashPos = mRefAndPath.indexOf('/');
-                    String potentialSha = slashPos > 0
-                            ? mRefAndPath.substring(0, slashPos) : mRefAndPath;
-                    if (SHA1_PATTERN.matcher(potentialSha).matches()) {
-                        return Optional.of(Pair.create(potentialSha,
-                                slashPos > 0 ? mRefAndPath.substring(slashPos + 1) : ""));
-                    }
-                    return Optional.absent();
-                }));
+                .flatMap(result -> RxUtils.toSingleOrFallback(result, () -> ApiHelpers.PageIterator
+                        .first(page -> repoService.getTags(mRepoOwner, mRepoName, page), this::matchesUrlPath)))
+                .map(this::determineRefAndPathFromFoundRef);
+    }
+
+    private boolean matchesUrlPath(Branch ref) {
+        return mRefAndPath.equals(ref.name()) || mRefAndPath.startsWith(ref.name() + "/");
+    }
+
+    private Optional<Pair<String, String>> determineRefAndPathFromFoundRef(Optional<Branch> foundRef) {
+        return foundRef.map(ref -> {
+            if (mRefAndPath.equals(ref.name())) {
+                return Pair.create(ref.name(), null);
+            } else {
+                String refNameWithSlash = ref.name() + "/";
+                return Pair.create(ref.name(), mRefAndPath.substring(refNameWithSlash.length()));
+            }
+        });
     }
 }

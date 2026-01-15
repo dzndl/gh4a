@@ -1,6 +1,8 @@
 package com.gh4a.resolver;
 
 import android.content.Intent;
+import android.net.Uri;
+
 import androidx.annotation.VisibleForTesting;
 import androidx.fragment.app.FragmentActivity;
 import androidx.core.util.Pair;
@@ -11,7 +13,6 @@ import com.gh4a.activities.PullRequestDiffViewerActivity;
 import com.gh4a.utils.ApiHelpers;
 import com.gh4a.utils.FileUtils;
 import com.gh4a.utils.IntentUtils;
-import com.gh4a.utils.Optional;
 import com.gh4a.utils.RxUtils;
 import com.meisolsson.githubsdk.model.GitHubFile;
 import com.meisolsson.githubsdk.model.PullRequest;
@@ -20,6 +21,7 @@ import com.meisolsson.githubsdk.service.pull_request.PullRequestReviewCommentSer
 import com.meisolsson.githubsdk.service.pull_request.PullRequestService;
 
 import java.util.List;
+import java.util.Optional;
 
 import io.reactivex.Single;
 
@@ -35,10 +37,10 @@ public class PullRequestDiffCommentLoadTask extends UrlLoadTask {
     @VisibleForTesting
     protected final int mPage;
 
-    public PullRequestDiffCommentLoadTask(FragmentActivity activity, String repoOwner,
-            String repoName, int pullRequestNumber, IntentUtils.InitialCommentMarker marker,
-            int page) {
-        super(activity);
+    public PullRequestDiffCommentLoadTask(FragmentActivity activity, Uri urlToResolve,
+            String repoOwner, String repoName, int pullRequestNumber,
+            IntentUtils.InitialCommentMarker marker, int page) {
+        super(activity, urlToResolve);
         mRepoOwner = repoOwner;
         mRepoName = repoName;
         mPullRequestNumber = pullRequestNumber;
@@ -48,13 +50,11 @@ public class PullRequestDiffCommentLoadTask extends UrlLoadTask {
 
     @Override
     protected Single<Optional<Intent>> getSingle() {
-        PullRequestService service = ServiceFactory.get(PullRequestService.class, false);
-        Single<PullRequest> pullRequestSingle = service.getPullRequest(mRepoOwner, mRepoName, mPullRequestNumber)
+        var prService = ServiceFactory.getForFullPagedLists(PullRequestService.class, false);
+        Single<PullRequest> pullRequestSingle = prService.getPullRequest(mRepoOwner, mRepoName, mPullRequestNumber)
                 .map(ApiHelpers::throwOnFailure);
 
-        final PullRequestReviewCommentService commentService =
-                ServiceFactory.get(PullRequestReviewCommentService.class, false);
-
+        var commentService = ServiceFactory.getForFullPagedLists(PullRequestReviewCommentService.class, false);
         Single<List<ReviewComment>> commentsSingle = ApiHelpers.PageIterator
                 .toSingle(page -> commentService.getPullRequestComments(
                         mRepoOwner, mRepoName, mPullRequestNumber, page))
@@ -62,7 +62,7 @@ public class PullRequestDiffCommentLoadTask extends UrlLoadTask {
                 .cache(); // single is used multiple times -> avoid refetching data
 
         Single<List<GitHubFile>> filesSingle = ApiHelpers.PageIterator
-                .toSingle(page -> service.getPullRequestFiles(mRepoOwner, mRepoName, mPullRequestNumber, page));
+                .toSingle(page -> prService.getPullRequestFiles(mRepoOwner, mRepoName, mPullRequestNumber, page));
 
         return commentsSingle
                 .compose(RxUtils.filterAndMapToFirst(c -> mMarker.matches(c.id(), c.createdAt())))
@@ -92,7 +92,7 @@ public class PullRequestDiffCommentLoadTask extends UrlLoadTask {
                                     mRepoOwner, mRepoName, mPullRequestNumber, mPage, mMarker)));
                         }
                     }
-                    return Single.just(Optional.absent());
+                    return Single.just(Optional.empty());
                 });
     }
 }

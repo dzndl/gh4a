@@ -20,35 +20,46 @@ import android.animation.AnimatorSet;
 import android.animation.ArgbEvaluator;
 import android.animation.ObjectAnimator;
 import android.animation.ValueAnimator;
-import android.annotation.TargetApi;
+import android.app.Activity;
 import android.app.ActivityManager;
+import android.app.assist.AssistContent;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.res.ColorStateList;
-import android.graphics.drawable.ColorDrawable;
-import android.os.Build;
+import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
+
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.CallSuper;
 import androidx.annotation.IdRes;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+
+import com.gh4a.activities.IssueActivity;
+import com.gh4a.activities.IssueEditActivity;
 import com.google.android.material.appbar.AppBarLayout;
 
 import androidx.appcompat.view.ContextThemeWrapper;
 import androidx.coordinatorlayout.widget.CoordinatorLayout;
 import com.google.android.material.navigation.NavigationView;
+import com.google.android.material.shape.MaterialShapeDrawable;
 import com.google.android.material.snackbar.Snackbar;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import androidx.core.view.GravityCompat;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowInsetsCompat;
 import androidx.drawerlayout.widget.DrawerLayout;
 import androidx.appcompat.app.ActionBar;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.graphics.drawable.DrawerArrowDrawable;
 import androidx.appcompat.view.SupportMenuInflater;
 import androidx.appcompat.widget.Toolbar;
+import androidx.loader.app.LoaderManager;
+
 import android.util.Log;
 import android.util.TypedValue;
 import android.view.Gravity;
@@ -59,8 +70,6 @@ import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewStub;
-import android.view.animation.Animation;
-import android.view.animation.AnimationUtils;
 import android.widget.TextView;
 
 import com.gh4a.activities.Github4AndroidActivity;
@@ -73,7 +82,9 @@ import com.gh4a.utils.UiUtils;
 import com.gh4a.widget.SwipeRefreshLayout;
 import com.gh4a.widget.ToggleableAppBarLayoutBehavior;
 import com.meisolsson.githubsdk.model.ClientErrorResponse;
+import com.meisolsson.githubsdk.model.Issue;
 import com.philosophicalhacker.lib.RxLoader;
+import com.squareup.moshi.JsonDataException;
 
 import java.net.HttpURLConnection;
 import java.util.ArrayList;
@@ -116,32 +127,45 @@ public abstract class BaseActivity extends AppCompatActivity implements
 
     private ActivityCompat.OnRequestPermissionsResultCallback mPendingPermissionCb;
 
-    private final List<ColorDrawable> mHeaderDrawables = new ArrayList<>();
-    private final List<ColorDrawable> mStatusBarDrawables = new ArrayList<>();
+    private final List<MaterialShapeDrawable> mHeaderDrawables = new ArrayList<>();
+    private final List<MaterialShapeDrawable> mStatusBarDrawables = new ArrayList<>();
     private final int[] mProgressColors = new int[2];
     private Animator mHeaderTransition;
     private final Handler mHandler = new Handler();
 
+    private final ActivityResultLauncher<Intent> mIssueReportLauncher = registerForActivityResult(
+            new ActivityResultContracts.StartActivityForResult(),
+            result -> {
+                if (result.getResultCode() == Activity.RESULT_OK) {
+                    Snackbar.make(mCoordinatorLayout, R.string.issue_reported, Snackbar.LENGTH_LONG)
+                            .setAction(R.string.view, v -> {
+                                Issue createdIssue = result.getData().getParcelableExtra("issue");
+                                Intent intent = IssueActivity.makeIntent(this, createdIssue);
+                                startActivity(intent);
+                            })
+                            .show();
+                }
+            }
+    );
+
     private RxLoader mRxLoader;
     private final CompositeDisposable mDisposeOnStop = new CompositeDisposable();
 
-    @SuppressWarnings("Convert2Lambda") // lambda wouldn't allow TargetApi annotation
-    private final Runnable mUpdateTaskDescriptionRunnable = new Runnable() {
-        @TargetApi(21)
-        @Override
-        public void run() {
-            String label = IntentUtils.isNewTaskIntent(getIntent()) ? getActionBarTitle() : null;
-            setTaskDescription(new ActivityManager.TaskDescription(label, null,
-                    mProgressColors[0]));
-        }
+    private final Runnable mUpdateTaskDescriptionRunnable = () -> {
+        String label = IntentUtils.isNewTaskIntent(getIntent()) ? getActionBarTitle() : null;
+        setTaskDescription(new ActivityManager.TaskDescription(label, null,
+                mProgressColors[0]));
     };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
-        onInitExtras(getIntent().getExtras());
+        Bundle extras = getIntent().getExtras();
+        if (extras != null) {
+            onInitExtras(extras);
+        }
         super.onCreate(savedInstanceState);
 
-        mRxLoader = new RxLoader(this, getSupportLoaderManager());
+        mRxLoader = new RxLoader(this, LoaderManager.getInstance(this));
 
         super.setContentView(R.layout.base_activity);
 
@@ -149,10 +173,17 @@ public abstract class BaseActivity extends AppCompatActivity implements
         setupNavigationDrawer();
         setupHeaderDrawable();
 
+        boolean showHomeAsUp =
+                // if NO_HISTORY is set, we can't navigate up, since launching a new activity
+                // will kill our activity. Hide the icon in that case.
+                (getIntent().getFlags() & Intent.FLAG_ACTIVITY_NO_HISTORY) == 0
+                // new task intents we started ourselves also should not show home as up
+                && !IntentUtils.isNewTaskIntent(getIntent());
+
         ActionBar actionBar = getSupportActionBar();
         actionBar.setTitle(getActionBarTitle());
         actionBar.setSubtitle(getActionBarSubtitle());
-        actionBar.setDisplayHomeAsUpEnabled(!IntentUtils.isNewTaskIntent(getIntent()));
+        actionBar.setDisplayHomeAsUpEnabled(showHomeAsUp);
 
         scheduleTaskDescriptionUpdate();
     }
@@ -183,13 +214,22 @@ public abstract class BaseActivity extends AppCompatActivity implements
             Snackbar.make(mCoordinatorLayout, R.string.load_auth_failure_notice, Snackbar.LENGTH_INDEFINITE)
                     .setAction(R.string.login, v -> goToToplevelActivity())
                     .show();
+            Log.d(Gh4Application.LOG_TAG, text, e);
+            return;
         }
-        if (are == null && e instanceof RuntimeException) {
+
+        boolean exceptionMustBeHandled = e instanceof ApiRequestException || e instanceof JsonDataException;
+        if (!exceptionMustBeHandled && e instanceof RuntimeException) {
             // If this happens, it means Rx catched a programming error of us. Crash the app
             // in that case, as that's what would have happened without Rx as well.
-            throw (RuntimeException) e;
+            // In doing so, don't just throw the exception (but instead delegate it right to the
+            // uncaught exception handler) to make sure RX doesn't add its composite exception
+            // which obscures the actual stack trace.
+            Thread currentThread = Thread.currentThread();
+            Thread.UncaughtExceptionHandler handler = currentThread.getUncaughtExceptionHandler();
+            handler.uncaughtException(currentThread, e);
         }
-        Log.d(Gh4Application.LOG_TAG, text, e);
+        Log.e(Gh4Application.LOG_TAG, text, e);
     }
 
     protected void registerTemporarySubscription(Disposable disposable) {
@@ -236,6 +276,11 @@ public abstract class BaseActivity extends AppCompatActivity implements
     }
 
     protected void configureLeftDrawerHeader(View header) {
+        ViewCompat.setOnApplyWindowInsetsListener(header, (view, insets) -> {
+            int statusBarHeight = insets.getInsets(WindowInsetsCompat.Type.systemBars()).top;
+            view.setPadding(0, statusBarHeight, 0, 0);
+            return insets;
+        });
     }
 
     protected boolean canSwipeToRefresh() {
@@ -249,11 +294,6 @@ public abstract class BaseActivity extends AppCompatActivity implements
 
     protected void setChildScrollDelegate(SwipeRefreshLayout.ChildScrollDelegate delegate) {
         mSwipeLayout.setChildScrollDelegate(delegate);
-    }
-
-    protected void setEmptyText(CharSequence text) {
-        ensureContent();
-        mEmptyView.setText(text);
     }
 
     protected void setContentShown(boolean shown) {
@@ -280,14 +320,18 @@ public abstract class BaseActivity extends AppCompatActivity implements
 
     }
 
+    public int getCurrentHeaderColor() {
+        return mProgressColors[0];
+    }
+
     protected void setHeaderColor(int color, int statusBarColor) {
         cancelHeaderTransition();
 
-        for (ColorDrawable d : mHeaderDrawables) {
-            d.setColor(color);
+        for (MaterialShapeDrawable d : mHeaderDrawables) {
+            d.setTint(color);
         }
-        for (ColorDrawable d : mStatusBarDrawables) {
-            d.setColor(statusBarColor);
+        for (MaterialShapeDrawable d : mStatusBarDrawables) {
+            d.setTint(statusBarColor);
         }
         mProgressColors[0] = color;
         mProgressColors[1] = statusBarColor;
@@ -301,11 +345,11 @@ public abstract class BaseActivity extends AppCompatActivity implements
         int color = UiUtils.resolveColor(this, colorAttrId);
         int statusBarColor = UiUtils.resolveColor(this, statusBarColorAttrId);
 
-        for (ColorDrawable d : mHeaderDrawables) {
-            animators.add(createColorTransition(d, color));
+        for (MaterialShapeDrawable d : mHeaderDrawables) {
+            animators.add(createTintTransition(d, color));
         }
-        for (ColorDrawable d : mStatusBarDrawables) {
-            animators.add(createColorTransition(d, statusBarColor));
+        for (MaterialShapeDrawable d : mStatusBarDrawables) {
+            animators.add(createTintTransition(d, statusBarColor));
         }
 
         final ValueAnimator progressAnimator1 = ValueAnimator.ofInt(mProgressColors[0], color);
@@ -338,16 +382,14 @@ public abstract class BaseActivity extends AppCompatActivity implements
     }
 
     private void scheduleTaskDescriptionUpdate() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            mHandler.removeCallbacks(mUpdateTaskDescriptionRunnable);
-            mHandler.postDelayed(mUpdateTaskDescriptionRunnable, 500);
-        }
+        mHandler.removeCallbacks(mUpdateTaskDescriptionRunnable);
+        mHandler.postDelayed(mUpdateTaskDescriptionRunnable, 500);
     }
 
     protected void updateRightNavigationDrawer() {
+        mRightDrawer.getMenu().clear();
         int[] drawerMenuResIds = getRightNavigationDrawerMenuResources();
         if (drawerMenuResIds != null) {
-            mRightDrawer.getMenu().clear();
             for (int id : drawerMenuResIds) {
                 mRightDrawer.inflateMenu(id);
             }
@@ -466,9 +508,7 @@ public abstract class BaseActivity extends AppCompatActivity implements
     @Override
     @CallSuper
     public boolean onCreateOptionsMenu(Menu menu) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP
-                && !IntentUtils.isNewTaskIntent(getIntent())
-                && displayDetachAction()) {
+        if (!IntentUtils.isNewTaskIntent(getIntent()) && displayDetachAction()) {
             menu.add(Menu.NONE, R.id.detach, Menu.NONE, R.string.detach);
         }
 
@@ -493,9 +533,7 @@ public abstract class BaseActivity extends AppCompatActivity implements
         }
 
         if (item.getItemId() == R.id.detach) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                IntentUtils.startNewTask(this, getIntent());
-            }
+            IntentUtils.startNewTask(this, getIntent());
             return true;
         }
 
@@ -540,6 +578,10 @@ public abstract class BaseActivity extends AppCompatActivity implements
     }
 
     public void setRightDrawerLockedClosed(boolean locked) {
+        if (!mRightDrawer.getMenu().hasVisibleItems()) {
+            // right drawer isn't populated, so keep locked in any case
+            locked = true;
+        }
         mDrawerLayout.setDrawerLockMode(
                 locked ? DrawerLayout.LOCK_MODE_LOCKED_CLOSED : DrawerLayout.LOCK_MODE_UNLOCKED,
                 Gravity.RIGHT);
@@ -570,6 +612,7 @@ public abstract class BaseActivity extends AppCompatActivity implements
     @Override
     public void onRequestPermissionsResult(int requestCode,
             @NonNull String[] permissions, @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (mPendingPermissionCb != null) {
             mPendingPermissionCb.onRequestPermissionsResult(0, permissions, grantResults);
             mPendingPermissionCb = null;
@@ -578,7 +621,13 @@ public abstract class BaseActivity extends AppCompatActivity implements
 
     @Override
     public void onBackPressed() {
-        if (!closeDrawers()) {
+        if (closeDrawers()) {
+            return;
+        }
+        boolean wasStartedAsNewTask = (getIntent().getFlags() & Intent.FLAG_ACTIVITY_NEW_TASK) != 0;
+        if (wasStartedAsNewTask) {
+            finishAndRemoveTask();
+        } else {
             super.onBackPressed();
         }
     }
@@ -628,6 +677,12 @@ public abstract class BaseActivity extends AppCompatActivity implements
                 messageView.setText(
                         getString(R.string.load_failure_explanation_with_reason, re.getMessage()));
                 retryButton.setVisibility(View.VISIBLE);
+            } else if (e instanceof JsonDataException) {
+                messageView.setText(getString(R.string.load_failure_explanation_parsing));
+                retryButton.setVisibility(View.GONE);
+                View reportIssueButton = error.findViewById(R.id.report_button);
+                reportIssueButton.setVisibility(View.VISIBLE);
+                reportIssueButton.setOnClickListener(v -> launchIssueCreationForError(e));
             } else {
                 messageView.setText(R.string.load_failure_explanation);
                 retryButton.setVisibility(View.VISIBLE);
@@ -636,6 +691,23 @@ public abstract class BaseActivity extends AppCompatActivity implements
         } else {
             error.setVisibility(View.GONE);
         }
+    }
+
+    private void launchIssueCreationForError(Throwable e) {
+        String issueTitle = "";
+        String issueBody = new StringBuilder()
+                .append("<!-- Please describe here what you were doing when the error occurred -->\n\n")
+                .append("### Error stack trace\n")
+                .append("```\n")
+                .append(Log.getStackTraceString(e))
+                .append("\n```")
+                .toString();
+        Intent newIssueIntent = IssueEditActivity.makeCreateIntent(
+                this,
+                getString(R.string.my_username),
+                getString(R.string.my_repo),
+                issueTitle, issueBody);
+        mIssueReportLauncher.launch(newIssueIntent);
     }
 
     protected void onDrawerOpened(boolean right) {
@@ -652,30 +724,31 @@ public abstract class BaseActivity extends AppCompatActivity implements
     private void setupHeaderDrawable() {
         ensureContent();
 
-        int primaryColor = UiUtils.resolveColor(this, R.attr.colorPrimary);
+        int primaryColor = UiUtils.resolveColor(this, androidx.appcompat.R.attr.colorPrimary);
         assignBackground(mLeftDrawerHeader, primaryColor);
         assignBackground(mRightDrawerHeader, primaryColor);
         assignBackground(mHeader, primaryColor);
 
-        int primaryDarkColor = UiUtils.resolveColor(this, R.attr.colorPrimaryDark);
-        ColorDrawable d = new ColorDrawable(primaryDarkColor);
+        int primaryDarkColor = UiUtils.resolveColor(this, androidx.appcompat.R.attr.colorPrimaryDark);
+        MaterialShapeDrawable d = MaterialShapeDrawable.createWithElevationOverlay(this);
+        d.setTint(primaryDarkColor);
         mDrawerLayout.setStatusBarBackground(d);
         mStatusBarDrawables.add(d);
     }
 
-    private ObjectAnimator createColorTransition(ColorDrawable drawable, int color) {
+    private ObjectAnimator createTintTransition(MaterialShapeDrawable drawable, int color) {
         final ObjectAnimator animation = ObjectAnimator.ofInt(drawable,
-                "color", drawable.getColor(), color);
+                "tint", drawable.getTintList().getDefaultColor(), color);
         animation.setEvaluator(new ArgbEvaluator());
         return animation;
     }
 
-    @SuppressWarnings("deprecation")
     private void assignBackground(View view, int color) {
         if (view == null) {
             return;
         }
-        ColorDrawable background = new ColorDrawable(color);
+        MaterialShapeDrawable background = MaterialShapeDrawable.createWithElevationOverlay(this);
+        background.setTint(color);
         view.setBackground(background);
         mHeaderDrawables.add(background);
     }
@@ -685,8 +758,8 @@ public abstract class BaseActivity extends AppCompatActivity implements
         if (canSwipeToRefresh()) {
             mSwipeLayout.setOnRefreshListener(this);
             mSwipeLayout.setColorSchemeColors(
-                    UiUtils.resolveColor(this, R.attr.colorPrimary), 0,
-                    UiUtils.resolveColor(this, R.attr.colorPrimaryDark), 0
+                    UiUtils.resolveColor(this, androidx.appcompat.R.attr.colorPrimary), 0,
+                    UiUtils.resolveColor(this, androidx.appcompat.R.attr.colorPrimaryDark), 0
             );
         }
 
@@ -788,7 +861,7 @@ public abstract class BaseActivity extends AppCompatActivity implements
             return null;
         }
         ColorStateList baseColor = ContextCompat.getColorStateList(this, value.resourceId);
-        if (!getTheme().resolveAttribute(R.attr.colorAccent, value, true)) {
+        if (!getTheme().resolveAttribute(androidx.appcompat.R.attr.colorAccent, value, true)) {
             return null;
         }
         int colorAccent = value.data;
@@ -807,25 +880,9 @@ public abstract class BaseActivity extends AppCompatActivity implements
 
     private void updateViewVisibility(boolean animate) {
         ensureContent();
-        updateViewVisibility(mProgress, animate, !mContentShown);
-        updateViewVisibility(mEmptyView, animate, mContentEmpty && mContentShown);
-        updateViewVisibility(mContentContainer, animate, !mContentEmpty && mContentShown);
-    }
-
-    private void updateViewVisibility(View view, boolean animate, boolean show) {
-        int visibility = show ? View.VISIBLE : View.GONE;
-        if (view.getVisibility() == visibility) {
-            return;
-        }
-
-        if (animate) {
-            Animation anim = AnimationUtils.loadAnimation(view.getContext(),
-                    show ? android.R.anim.fade_in : android.R.anim.fade_out);
-            view.startAnimation(anim);
-        } else {
-            view.clearAnimation();
-        }
-        view.setVisibility(visibility);
+        UiUtils.updateViewVisibility(mProgress, animate, !mContentShown);
+        UiUtils.updateViewVisibility(mEmptyView, animate, mContentEmpty && mContentShown);
+        UiUtils.updateViewVisibility(mContentContainer, animate, !mContentEmpty && mContentShown);
     }
 
     private void ensureContent() {
@@ -833,8 +890,8 @@ public abstract class BaseActivity extends AppCompatActivity implements
             return;
         }
         mProgress = findViewById(R.id.progress);
-        mProgressColors[0] = UiUtils.resolveColor(this, R.attr.colorPrimary);
-        mProgressColors[1] = UiUtils.resolveColor(this, R.attr.colorPrimaryDark);
+        mProgressColors[0] = UiUtils.resolveColor(this, androidx.appcompat.R.attr.colorPrimary);
+        mProgressColors[1] = UiUtils.resolveColor(this, androidx.appcompat.R.attr.colorPrimaryDark);
         mProgress.setSmoothProgressDrawableColors(mProgressColors);
 
         mCoordinatorLayout = findViewById(R.id.coordinator_layout);
@@ -852,5 +909,17 @@ public abstract class BaseActivity extends AppCompatActivity implements
         mSwipeLayout.setAppBarLayout(mHeader);
 
         mContentShown = true;
+    }
+
+    @Override
+    public void onProvideAssistContent(AssistContent outContent) {
+        Uri activityUri = getActivityUri();
+        if (activityUri != null) {
+            outContent.setWebUri(activityUri);
+        }
+    }
+
+    protected @Nullable Uri getActivityUri() {
+        return null;
     }
 }

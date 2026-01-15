@@ -19,6 +19,7 @@ import android.content.Intent;
 import android.net.Uri;
 import androidx.recyclerview.widget.RecyclerView;
 import android.util.Log;
+import android.util.Pair;
 import android.view.ContextMenu;
 import android.view.ContextMenu.ContextMenuInfo;
 import android.view.LayoutInflater;
@@ -30,6 +31,7 @@ import android.widget.Toast;
 import com.gh4a.BaseActivity;
 import com.gh4a.Gh4Application;
 import com.gh4a.R;
+import com.gh4a.ServiceFactory;
 import com.gh4a.activities.CommitActivity;
 import com.gh4a.activities.CompareActivity;
 import com.gh4a.activities.GistActivity;
@@ -38,22 +40,26 @@ import com.gh4a.activities.IssueListActivity;
 import com.gh4a.activities.PullRequestActivity;
 import com.gh4a.activities.ReleaseInfoActivity;
 import com.gh4a.activities.RepositoryActivity;
+import com.gh4a.activities.ReviewActivity;
 import com.gh4a.activities.UserActivity;
 import com.gh4a.activities.WikiListActivity;
 import com.gh4a.adapter.EventAdapter;
 import com.gh4a.adapter.RootAdapter;
 import com.gh4a.resolver.CommitCommentLoadTask;
 import com.gh4a.resolver.PullRequestReviewCommentLoadTask;
+import com.gh4a.utils.ApiHelpers;
+import com.gh4a.utils.DownloadUtils;
 import com.gh4a.utils.IntentUtils;
-import com.gh4a.utils.Optional;
 import com.gh4a.utils.RxUtils;
-import com.gh4a.utils.UiUtils;
 import com.gh4a.widget.ContextMenuAwareRecyclerView;
+import com.meisolsson.githubsdk.model.Commit;
+import com.meisolsson.githubsdk.model.CommitCompare;
 import com.meisolsson.githubsdk.model.Download;
 import com.meisolsson.githubsdk.model.GitHubEvent;
 import com.meisolsson.githubsdk.model.GitHubEventType;
 import com.meisolsson.githubsdk.model.GitHubWikiPage;
 import com.meisolsson.githubsdk.model.Issue;
+import com.meisolsson.githubsdk.model.Page;
 import com.meisolsson.githubsdk.model.PullRequest;
 import com.meisolsson.githubsdk.model.ReferenceType;
 import com.meisolsson.githubsdk.model.Release;
@@ -69,18 +75,27 @@ import com.meisolsson.githubsdk.model.payload.DownloadPayload;
 import com.meisolsson.githubsdk.model.payload.FollowPayload;
 import com.meisolsson.githubsdk.model.payload.ForkPayload;
 import com.meisolsson.githubsdk.model.payload.GistPayload;
+import com.meisolsson.githubsdk.model.payload.GitHubPayload;
 import com.meisolsson.githubsdk.model.payload.GollumPayload;
 import com.meisolsson.githubsdk.model.payload.IssueCommentPayload;
 import com.meisolsson.githubsdk.model.payload.IssuesPayload;
 import com.meisolsson.githubsdk.model.payload.PullRequestPayload;
 import com.meisolsson.githubsdk.model.payload.PullRequestReviewCommentPayload;
+import com.meisolsson.githubsdk.model.payload.PullRequestReviewPayload;
 import com.meisolsson.githubsdk.model.payload.PushPayload;
 import com.meisolsson.githubsdk.model.payload.ReleasePayload;
+import com.meisolsson.githubsdk.service.pull_request.PullRequestService;
+import com.meisolsson.githubsdk.service.repositories.RepositoryCommitService;
 
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
 import io.reactivex.Single;
+import retrofit2.Response;
 
 public abstract class EventListFragment extends PagedDataBaseFragment<GitHubEvent> {
     private static final int MENU_DOWNLOAD_START = 100;
@@ -119,21 +134,13 @@ public abstract class EventListFragment extends PagedDataBaseFragment<GitHubEven
             return;
         }
 
-        GitHubEvent.RepoIdentifier eventRepo = event.repo();
-        String repoOwner = "";
-        String repoName = "";
+        Pair<String, String> repoOwnerAndName = parseRepoIdentifierToOwnerAndName(event.repo());
+        String repoOwner = repoOwnerAndName != null ? repoOwnerAndName.first : "";
+        String repoName = repoOwnerAndName != null ? repoOwnerAndName.second : "";
         Intent intent = null;
         Single<Optional<Intent>> intentSingle = null;
 
-        if (eventRepo != null) {
-            String[] repoNamePart = eventRepo.repoWithUserName().split("/");
-            if (repoNamePart.length == 2) {
-                repoOwner = repoNamePart[0];
-                repoName = repoNamePart[1];
-            }
-        }
-
-        if (Arrays.binarySearch(REPO_EVENTS, event.type()) >= 0 && eventRepo == null) {
+        if (Arrays.binarySearch(REPO_EVENTS, event.type()) >= 0 && repoOwnerAndName == null) {
             Toast.makeText(getActivity(), R.string.repo_not_found_toast, Toast.LENGTH_LONG).show();
             return;
         }
@@ -168,9 +175,7 @@ public abstract class EventListFragment extends PagedDataBaseFragment<GitHubEven
             case DownloadEvent: {
                 DownloadPayload payload = (DownloadPayload) event.payload();
                 Download download = payload.download();
-                UiUtils.enqueueDownloadWithPermissionCheck((BaseActivity) getActivity(),
-                        download.htmlUrl(), download.contentType(),
-                        download.name(), download.description(), null);
+                DownloadUtils.enqueueDownloadWithPermissionCheck((BaseActivity) getActivity(), download);
                 break;
             }
 
@@ -247,6 +252,13 @@ public abstract class EventListFragment extends PagedDataBaseFragment<GitHubEven
                 PullRequestPayload payload = (PullRequestPayload) event.payload();
                 intent = PullRequestActivity.makeIntent(getActivity(),
                         repoOwner, repoName, payload.number());
+                break;
+            }
+
+            case PullRequestReviewEvent: {
+                PullRequestReviewPayload payload = (PullRequestReviewPayload) event.payload();
+                intent = ReviewActivity.makeIntent(getActivity(), repoOwner, repoName,
+                        payload.pullRequest().number(), payload.review(), null);
                 break;
             }
 
@@ -334,28 +346,27 @@ public abstract class EventListFragment extends PagedDataBaseFragment<GitHubEven
             return;
         }
 
-        GitHubEvent.RepoIdentifier eventRepo = event.repo();
-        String[] repoNamePart = eventRepo.repoWithUserName().split("/");
-        String repoOwner = repoNamePart.length == 2 ? repoNamePart[0] : null;
-        String repoName = repoNamePart.length == 2 ? repoNamePart[1] : null;
+        Pair<String, String> repoOwnerAndName = parseRepoIdentifierToOwnerAndName(event.repo());
+        String repoOwner = repoOwnerAndName != null ? repoOwnerAndName.first : null;
+        String repoName = repoOwnerAndName != null ? repoOwnerAndName.second : null;
 
         menu.setHeaderTitle(R.string.go_to);
 
         /* Common menu */
         menu.add(getString(R.string.menu_user, event.actor().login()))
                 .setIntent(UserActivity.makeIntent(getActivity(), event.actor()));
-        if (repoOwner != null) {
-            menu.add(getString(R.string.menu_repo, repoOwner + "/" + repoName))
+        if (repoOwnerAndName != null) {
+            menu.add(getString(R.string.menu_repo, event.repo().repoWithUserName()))
                     .setIntent(RepositoryActivity.makeIntent(getActivity(), repoOwner, repoName));
         }
 
         switch (event.type()) {
             case CommitCommentEvent:
-                if (repoOwner != null) {
+                if (repoOwnerAndName != null) {
                     CommitCommentPayload payload = (CommitCommentPayload) event.payload();
                     String sha = payload.comment().commitId();
                     menu.add(getString(R.string.menu_commit, sha.substring(0, 7)))
-                            .setIntent(CommitActivity.makeIntent(getActivity(), repoOwner, repoName, sha));
+                            .setIntent(CommitActivity.makeIntent(getActivity(), repoOwnerAndName.first, repoOwnerAndName.second, sha));
                 }
                 break;
 
@@ -380,7 +391,7 @@ public abstract class EventListFragment extends PagedDataBaseFragment<GitHubEven
                 ForkPayload payload = (ForkPayload) event.payload();
                 Repository forkee = payload.forkee();
                 if (forkee != null) {
-                    menu.add(getString(R.string.menu_fork, forkee.owner().login() + "/" + forkee.name()))
+                    menu.add(getString(R.string.menu_fork, ApiHelpers.formatRepoName(getActivity(), forkee)))
                             .setIntent(RepositoryActivity.makeIntent(getActivity(), forkee));
                 }
                 break;
@@ -429,7 +440,7 @@ public abstract class EventListFragment extends PagedDataBaseFragment<GitHubEven
             }
 
             case PushEvent: {
-                if (repoOwner != null) {
+                if (repoOwnerAndName != null) {
                     PushPayload payload = (PushPayload) event.payload();
                     menu.add(getString(R.string.menu_compare, payload.head().substring(0, 7)))
                             .setIntent(CompareActivity.makeIntent(getActivity(), repoOwner, repoName,
@@ -473,19 +484,161 @@ public abstract class EventListFragment extends PagedDataBaseFragment<GitHubEven
             if (event.type() == GitHubEventType.ReleaseEvent) {
                 ReleasePayload payload = (ReleasePayload) event.payload();
                 ReleaseAsset asset = payload.release().assets().get(id - MENU_DOWNLOAD_START);
-                UiUtils.enqueueDownloadWithPermissionCheck((BaseActivity) getActivity(),
-                        asset.url(), asset.contentType(),
-                        asset.name(), asset.label(), null);
+                DownloadUtils.enqueueDownloadWithPermissionCheck((BaseActivity) getActivity(), asset);
             } else if (event.type() == GitHubEventType.DownloadEvent) {
                 DownloadPayload payload = (DownloadPayload) event.payload();
                 Download download = payload.download();
-                UiUtils.enqueueDownloadWithPermissionCheck((BaseActivity) getActivity(),
-                        download.htmlUrl(), download.contentType(),
-                        download.name(), download.description(), null);
-            }
+                DownloadUtils.enqueueDownloadWithPermissionCheck((BaseActivity) getActivity(), download);
+                }
+            return true;
+        }
+
+        Intent intent = item.getIntent();
+        if (intent != null) {
+            getActivity().startActivity(intent);
             return true;
         }
 
         return false;
     }
+
+    @Override
+    protected Single<Response<Page<GitHubEvent>>> loadPage(int page, boolean bypassCache) {
+        return loadRawPage(page, bypassCache).flatMap(response -> {
+            if (!response.isSuccessful()) {
+                return Single.just(response);
+            }
+            Page<GitHubEvent> responsePage = response.body();
+            if (responsePage == null) {
+                return Single.just(response);
+            }
+
+            final PullRequestService
+                    prService = ServiceFactory.get(PullRequestService.class, bypassCache);
+            Map<PrIdentifier, Single<Response<PullRequest>>> prSingles = new HashMap<>();
+
+            final RepositoryCommitService commitService =
+                    ServiceFactory.get(RepositoryCommitService.class, bypassCache);
+            Map<PushIdentifier, Single<Response<CommitCompare>>> pushSingles = new HashMap<>();
+
+            for (GitHubEvent event : responsePage.items()) {
+                Pair<String, String> repoOwnerAndName =
+                        parseRepoIdentifierToOwnerAndName(event.repo());
+                if (repoOwnerAndName == null) {
+                    continue;
+                }
+                if (event.type() == GitHubEventType.PullRequestEvent) {
+                    PullRequestPayload payload = (PullRequestPayload) event.payload();
+                    Single<Response<PullRequest>> prSingle = prService.getPullRequest(
+                            repoOwnerAndName.first, repoOwnerAndName.second, payload.number());
+                    prSingles.put(new PrIdentifier(event.repo(), payload.number()), prSingle);
+                } else if (event.type() == GitHubEventType.PushEvent) {
+                    PushPayload payload = (PushPayload) event.payload();
+                    Single<Response<CommitCompare>> pushSingle = commitService.compareCommits(
+                            repoOwnerAndName.first, repoOwnerAndName.second,
+                            payload.before(), payload.head());
+                    pushSingles.put(new PushIdentifier(event.repo(),
+                            payload.before(), payload.head()), pushSingle);
+                }
+            }
+
+            if (prSingles.isEmpty() && pushSingles.isEmpty()) {
+                return Single.just(response);
+            }
+
+            List<Single<Pair<?, Response<?>>>> singlesWithId = new ArrayList<>();
+            for (Map.Entry<PrIdentifier, Single<Response<PullRequest>>> entry : prSingles.entrySet()) {
+                singlesWithId.add(entry.getValue().map(prResp ->
+                        Pair.create(entry.getKey(), prResp)));
+            }
+            for (Map.Entry<PushIdentifier, Single<Response<CommitCompare>>> entry : pushSingles.entrySet()) {
+                singlesWithId.add(entry.getValue().map(commitsResp ->
+                        Pair.create(entry.getKey(), commitsResp)));
+            }
+
+            return Single.zip(singlesWithId, responses -> {
+                List<GitHubEvent> newItems = new ArrayList<>();
+
+                for (GitHubEvent event : responsePage.items()) {
+                    GitHubPayload<?> newPayload = null;
+                    if (event.type() == GitHubEventType.PullRequestEvent && event.repo() != null) {
+                        PullRequestPayload payload = (PullRequestPayload) event.payload();
+                        for (Object entryRaw : responses) {
+                            var entry = (Pair<?, Response<?>>) entryRaw;
+                            if (entry.first instanceof PrIdentifier prId &&
+                                    prId.repo.equals(event.repo()) &&
+                                    prId.prNumber == payload.number()) {
+                                if (entry.second.isSuccessful()) {
+                                    newPayload = payload.toBuilder()
+                                            .pullRequest((PullRequest) entry.second.body())
+                                            .build();
+                                }
+                                break;
+                            }
+                        }
+                    } else if (event.type() == GitHubEventType.PushEvent && event.repo() != null) {
+                        PushPayload payload = (PushPayload) event.payload();
+                        for (Object entryRaw : responses) {
+                            var entry = (Pair<?, Response<?>>) entryRaw;
+                            if (entry.first instanceof PushIdentifier pushId &&
+                                    pushId.repo.equals(event.repo()) &&
+                                    pushId.base.equals(payload.before()) &&
+                                    pushId.head.equals(payload.head())) {
+                                if (entry.second.isSuccessful()) {
+                                    CommitCompare compare = (CommitCompare) entry.second.body();
+                                    List<GitCommit> newCommits = new ArrayList<>();
+                                    for (Commit commit : compare.commits()) {
+                                        newCommits.add(commit.commit().toBuilder()
+                                                .sha(commit.sha())
+                                                .build());
+                                    }
+                                    newPayload = payload.toBuilder()
+                                            .commits(newCommits)
+                                            .size(compare.commits().size())
+                                            .build();
+                                }
+                                break;
+                            }
+
+                        }
+                    }
+                    if (newPayload != null) {
+                        newItems.add(event.toBuilder().payload(newPayload).build());
+                    } else {
+                        newItems.add(event);
+                    }
+                }
+
+                Page<GitHubEvent> newPage = Page.<GitHubEvent>builder()
+                        .items(newItems)
+                        .first(responsePage.first())
+                        .last(responsePage.last())
+                        .next(responsePage.next())
+                        .prev(responsePage.prev())
+                        .build();
+                return Response.success(newPage);
+            });
+        });
+    }
+
+    private static Pair<String, String> parseRepoIdentifierToOwnerAndName(GitHubEvent.RepoIdentifier identifier) {
+        if (identifier == null) {
+            return null;
+        }
+        String repoWithUserName = identifier.repoWithUserName();
+        if (repoWithUserName == null) {
+            return null;
+        }
+        String[] parts = repoWithUserName.split("/");
+        if (parts.length != 2) {
+            return null;
+        }
+        return Pair.create(parts[0], parts[1]);
+    }
+
+    protected abstract Single<Response<Page<GitHubEvent>>> loadRawPage(int page, boolean bypassCache);
+
+    private record PrIdentifier(GitHubEvent.RepoIdentifier repo, int prNumber) {}
+
+    private record PushIdentifier(GitHubEvent.RepoIdentifier repo, String base, String head) {}
 }

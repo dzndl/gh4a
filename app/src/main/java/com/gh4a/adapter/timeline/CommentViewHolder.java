@@ -2,12 +2,7 @@ package com.gh4a.adapter.timeline;
 
 import android.content.Context;
 import android.content.Intent;
-import android.graphics.Typeface;
-import androidx.annotation.Nullable;
 import android.text.SpannableStringBuilder;
-import android.text.style.ForegroundColorSpan;
-import android.text.style.RelativeSizeSpan;
-import android.text.style.StyleSpan;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
@@ -25,7 +20,6 @@ import com.gh4a.utils.HttpImageGetter;
 import com.gh4a.utils.StringUtils;
 import com.gh4a.utils.UiUtils;
 import com.gh4a.widget.ReactionBar;
-import com.gh4a.widget.StyleableTextView;
 import com.meisolsson.githubsdk.model.AuthorAssociation;
 import com.meisolsson.githubsdk.model.Reaction;
 import com.meisolsson.githubsdk.model.Reactions;
@@ -34,6 +28,7 @@ import com.meisolsson.githubsdk.model.User;
 import java.util.Date;
 import java.util.List;
 
+import androidx.annotation.Nullable;
 import io.reactivex.Single;
 
 class CommentViewHolder
@@ -47,8 +42,8 @@ class CommentViewHolder
     private final String mRepoOwner;
 
     private final ImageView ivGravatar;
-    private final StyleableTextView tvDesc;
-    private final StyleableTextView tvExtra;
+    private final TextView tvDesc;
+    private final TextView tvExtra;
     private final TextView tvTimestamp;
     private final TextView tvEditTimestamp;
     private final ImageView ivMenu;
@@ -68,6 +63,7 @@ class CommentViewHolder
         boolean onMenItemClick(TimelineItem.TimelineComment comment, MenuItem menuItem);
         Single<List<Reaction>> loadReactionDetails(TimelineItem.TimelineComment item, boolean bypassCache);
         Single<Reaction> addReaction(TimelineItem.TimelineComment item, String content);
+        Single<Boolean> deleteReaction(TimelineItem.TimelineComment item, long reactionId);
     }
 
     public CommentViewHolder(View view, HttpImageGetter imageGetter, String repoOwner,
@@ -97,7 +93,7 @@ class CommentViewHolder
         mPopupMenu.setOnMenuItemClickListener(this);
 
         MenuItem reactItem = mPopupMenu.getMenu().findItem(R.id.react);
-        if (callback.canAddReaction()) {
+        if (Gh4Application.get().isAuthorized() && callback.canAddReaction()) {
             mPopupMenu.getMenuInflater().inflate(R.menu.reaction_menu, reactItem.getSubMenu());
             mReactionMenuHelper = new ReactionBar.AddReactionMenuHelper(view.getContext(),
                     reactItem.getSubMenu(), this, this, reactionDetailsCache);
@@ -143,17 +139,11 @@ class CommentViewHolder
         mImageGetter.bind(tvDesc, item.comment().bodyHtml(), item.comment().id());
 
         // Extra view
-        String login = ApiHelpers.getUserLogin(mContext, user);
-        SpannableStringBuilder userName = new SpannableStringBuilder(login);
-        userName.setSpan(new StyleSpan(Typeface.BOLD), 0, userName.length(), 0);
+        SpannableStringBuilder userName = ApiHelpers.getUserLoginWithType(mContext, user, true);
 
         String association = getAuthorAssociation(item);
         if (association != null) {
-            int start = userName.length();
-            userName.append(" (").append(association).append(")");
-            userName.setSpan(new RelativeSizeSpan(0.85f), start, userName.length(), 0);
-            int color = UiUtils.resolveColor(mContext, android.R.attr.textColorSecondary);
-            userName.setSpan(new ForegroundColorSpan(color), start, userName.length(), 0);
+            StringUtils.addUserTypeSpan(mContext, userName, userName.length(), association);
         }
 
         tvExtra.setText(userName);
@@ -179,7 +169,7 @@ class CommentViewHolder
         Menu menu = mPopupMenu.getMenu();
         menu.findItem(R.id.edit).setVisible(canEdit);
         menu.findItem(R.id.delete).setVisible(canEdit);
-        menu.findItem(R.id.view_in_file).setVisible(item.file != null && position != -1);
+        menu.findItem(R.id.view_in_file).setVisible(item.hasFilePatch() && position != -1);
     }
 
     @Nullable
@@ -251,7 +241,7 @@ class CommentViewHolder
         }
         this.reactions.setReactions(reactions);
         if (mReactionMenuHelper != null) {
-            mReactionMenuHelper.update();
+            mReactionMenuHelper.updateMenuItems();
         }
     }
 
@@ -268,5 +258,10 @@ class CommentViewHolder
     @Override
     public Single<Reaction> addReaction(ReactionBar.Item item, String content) {
         return mCallback.addReaction(mBoundItem, content);
+    }
+
+    @Override
+    public Single<Boolean> deleteReaction(ReactionBar.Item item, long reactionId) {
+        return mCallback.deleteReaction(mBoundItem, reactionId);
     }
 }

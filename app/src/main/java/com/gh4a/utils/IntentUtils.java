@@ -1,43 +1,81 @@
 package com.gh4a.utils;
 
-
 import android.app.Activity;
+import android.content.ActivityNotFoundException;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.net.Uri;
-import android.os.Build;
 import android.os.Bundle;
 import android.os.Parcel;
 import android.os.Parcelable;
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
-import androidx.annotation.RequiresApi;
-import androidx.browser.customtabs.CustomTabsIntent;
 import android.widget.Toast;
 
+import com.gh4a.BaseActivity;
 import com.gh4a.R;
+import com.gh4a.resolver.LinkParser;
+import com.gh4a.fragment.SettingsFragment;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
-import java.util.zip.GZIPInputStream;
-import java.util.zip.GZIPOutputStream;
+import java.util.concurrent.TimeUnit;
+import java.util.zip.Deflater;
+import java.util.zip.DeflaterOutputStream;
+import java.util.zip.InflaterInputStream;
+
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import androidx.browser.customtabs.CustomTabColorSchemeParams;
+import androidx.browser.customtabs.CustomTabsIntent;
+import androidx.fragment.app.FragmentActivity;
 
 public class IntentUtils {
     private static final String EXTRA_NEW_TASK = "IntentUtils.new_task";
     private static final String RAW_URL_FORMAT = "https://raw.githubusercontent.com/%s/%s/%s/%s";
 
     private IntentUtils() {
+    }
+
+    public static void openLinkInternallyOrExternally(FragmentActivity activity, Uri uri) {
+        String uriScheme = uri.getScheme();
+        if (uriScheme == null || uriScheme.equals("file") || uriScheme.equals("content")) {
+            // We can't do anything about relative or anchor URLs here, and there are no good reasons to
+            // try to open file or content provider URIs (the former ones would raise an exception on API 24+)
+            return;
+        }
+
+        if (uriScheme.equals("mailto")) {
+            try {
+                Intent intent = new Intent(Intent.ACTION_VIEW, uri);
+                activity.startActivity(intent);
+            } catch (ActivityNotFoundException e) {
+                Toast.makeText(activity, R.string.link_not_openable, Toast.LENGTH_SHORT).show();
+            }
+            return;
+        }
+
+        LinkParser.ParseResult result = LinkParser.parseUri(activity, uri, null);
+        int headerColor = activity instanceof BaseActivity ? ((BaseActivity) activity).getCurrentHeaderColor() : 0;
+        if (result == null) {
+            openInCustomTabOrBrowser(activity, uri, headerColor);
+        } else if (result.intent != null) {
+            activity.startActivity(result.intent);
+        } else if (result.loadTask != null) {
+            result.loadTask.setOpenUnresolvedUriInCustomTab(headerColor);
+            result.loadTask.execute();
+        }
     }
 
     public static void launchBrowser(Context context, Uri uri) {
@@ -50,11 +88,15 @@ public class IntentUtils {
         }
         Intent intent = createBrowserIntent(context, uri);
         if (intent != null) {
-            intent.addFlags(flags);
-            context.startActivity(intent);
-        } else {
-            Toast.makeText(context, R.string.no_browser_found, Toast.LENGTH_LONG).show();
+            try {
+                intent.addFlags(flags);
+                context.startActivity(intent);
+                return;
+            } catch (ActivityNotFoundException e) {
+                // just show toast
+            }
         }
+        Toast.makeText(context, R.string.no_browser_found, Toast.LENGTH_LONG).show();
     }
 
     // We want to forward the URI to a browser, but our own intent filter matches
@@ -86,17 +128,29 @@ public class IntentUtils {
     }
 
     public static void openInCustomTabOrBrowser(Activity activity, Uri uri) {
+        openInCustomTabOrBrowser(activity, uri, 0);
+    }
+
+    public static void openInCustomTabOrBrowser(Activity activity, Uri uri, int headerColor) {
+        SharedPreferences prefs = activity.getSharedPreferences(SettingsFragment.PREF_NAME,
+                Context.MODE_PRIVATE);
+        boolean customTabsEnabled = prefs.getBoolean(SettingsFragment.KEY_CUSTOM_TABS, true);
         String pkg = CustomTabsHelper.getPackageNameToUse(activity);
-        if (pkg != null) {
-            int color = UiUtils.resolveColor(activity, R.attr.colorPrimary);
+
+        if (pkg != null && customTabsEnabled) {
+            if (headerColor == 0) {
+                headerColor = UiUtils.resolveColor(activity, androidx.appcompat.R.attr.colorPrimary);
+            }
+            CustomTabColorSchemeParams colorParams = new CustomTabColorSchemeParams.Builder()
+                    .setToolbarColor(headerColor)
+                    .build();
             CustomTabsIntent i = new CustomTabsIntent.Builder()
-                    .setToolbarColor(color)
+                    .setDefaultColorSchemeParams(colorParams)
                     .build();
             i.intent.setPackage(pkg);
-            i.intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             i.launchUrl(activity, uri);
         } else {
-            launchBrowser(activity, uri, Intent.FLAG_ACTIVITY_NEW_TASK);
+            launchBrowser(activity, uri);
         }
     }
 
@@ -166,20 +220,14 @@ public class IntentUtils {
             return lastIntent;
         }
 
-        Intent chooserIntent = Intent.createChooser(lastIntent, null);
-        chooserIntent.putExtra(Intent.EXTRA_INITIAL_INTENTS,
-                chooserIntents.toArray(new Intent[chooserIntents.size()]));
-        return chooserIntent;
+        return Intent.createChooser(lastIntent, null)
+                .putExtra(Intent.EXTRA_ALTERNATE_INTENTS, chooserIntents.toArray(new Intent[0]));
     }
 
-    @RequiresApi(Build.VERSION_CODES.LOLLIPOP)
     public static void startNewTask(@NonNull Context context, @NonNull Intent intent) {
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_DOCUMENT);
         intent.addFlags(Intent.FLAG_ACTIVITY_MULTIPLE_TASK);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            intent.addFlags(Intent.FLAG_ACTIVITY_LAUNCH_ADJACENT);
-        }
         intent.putExtra(EXTRA_NEW_TASK, true);
         context.startActivity(intent);
     }
@@ -188,55 +236,68 @@ public class IntentUtils {
         return intent != null && intent.getBooleanExtra(EXTRA_NEW_TASK, false);
     }
 
-    public static void putParcelableToBundleCompressed(Bundle bundle,
-            String key, Parcelable parcelable, int thresholdBytes) {
-        Parcel parcel = Parcel.obtain();
-        parcel.writeParcelable(parcelable, 0);
-        byte[] bytes = parcel.marshall();
-        parcel.recycle();
-
-        if (bytes.length > thresholdBytes) {
-            try (ByteArrayOutputStream baos = new ByteArrayOutputStream(bytes.length);
-                    GZIPOutputStream gzos = new GZIPOutputStream(baos)) {
-                gzos.write(bytes);
-                gzos.close();
-                bundle.putByteArray(key + "_compressed", baos.toByteArray());
-                return;
-            } catch (IOException e) {
-                // Fall back to storing uncompressed
-            }
-        }
-        bundle.putParcelable(key, parcelable);
+    public static void putCompressedExtra(Intent intent, String key, Object object) {
+        Bundle extras = intent.getExtras();
+        Bundle updatedExtras = extras != null ? extras : new Bundle();
+        putCompressedValueToBundle(updatedExtras, key, object);
+        intent.replaceExtras(updatedExtras);
     }
 
-    public static <T> T readCompressedParcelableFromBundle(Bundle bundle, String key) {
-        byte[] uncompressedData = null;
+    public static <T> T getCompressedExtra(Intent intent, String key) {
+        Bundle extras = intent.getExtras();
+        if (extras == null) {
+            return null;
+        }
+        return readCompressedValueFromBundle(extras, key);
+    }
 
-        if (bundle.containsKey(key + "_compressed")) {
-            byte[] compressedData = bundle.getByteArray(key + "_compressed");
-            try (ByteArrayInputStream bais = new ByteArrayInputStream(compressedData);
-                    ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                    GZIPInputStream gzis = new GZIPInputStream(bais)) {
-                byte[] buffer = new byte[2048];
-                int len;
-                while ((len = gzis.read(buffer)) != -1) {
-                    baos.write(buffer, 0, len);
-                }
-                uncompressedData = baos.toByteArray();
-            } catch (IOException e) {
-                uncompressedData = null;
-            }
+    public static void putCompressedValueToBundle(Bundle bundle, String key, Object value) {
+        Parcel parcel = Parcel.obtain();
+        parcel.writeValue(value);
+        byte[] compressedData = compressBytes(parcel.marshall());
+        parcel.recycle();
+        bundle.putByteArray(key, compressedData);
+    }
+
+    public static <T> T readCompressedValueFromBundle(Bundle bundle, String key) {
+        byte[] compressedData = bundle.getByteArray(key);
+        if (compressedData == null) {
+            return null;
         }
 
-        if (uncompressedData != null) {
-            Parcel parcel = Parcel.obtain();
-            parcel.unmarshall(uncompressedData, 0, uncompressedData.length);
-            parcel.setDataPosition(0);
-            T result = parcel.readParcelable(FileUtils.class.getClassLoader());
-            parcel.recycle();
-            return result;
-        } else {
-            return bundle.getParcelable(key);
+        byte[] uncompressedData = uncompressBytes(compressedData);
+        Parcel parcel = Parcel.obtain();
+        parcel.unmarshall(uncompressedData, 0, uncompressedData.length);
+        parcel.setDataPosition(0);
+        T value = (T) parcel.readValue(IntentUtils.class.getClassLoader());
+        parcel.recycle();
+        return value;
+    }
+
+    private static byte[] compressBytes(@NonNull byte[] dataToCompress) {
+        int compressionLevel = 3;  // on a 1-9 scale, best compromise for speed without giving up too much on size
+        try (var byteOutputStream = new ByteArrayOutputStream();
+             var deflaterStream = new DeflaterOutputStream(byteOutputStream, new Deflater(compressionLevel))) {
+            deflaterStream.write(dataToCompress);
+            deflaterStream.close();
+            return byteOutputStream.toByteArray();
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    private static byte[] uncompressBytes(@NonNull byte[] compressedData) {
+        try (var byteInputStream = new ByteArrayInputStream(compressedData);
+             var byteOutputStream = new ByteArrayOutputStream();
+             var inflaterStream = new InflaterInputStream(byteInputStream)) {
+            byte[] buffer = new byte[2048];
+            int readBytes;
+            while ((readBytes = inflaterStream.read(buffer)) != -1) {
+                byteOutputStream.write(buffer, 0, readBytes);
+            }
+            return byteOutputStream.toByteArray();
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
         }
     }
 
@@ -257,12 +318,16 @@ public class IntentUtils {
             this.date = date;
         }
 
-        public boolean matches(long id, Date date) {
+        public boolean matches(long id, Date dateToMatch) {
             if (commentId >= 0 && id >= 0) {
                 return commentId == id;
             }
-            if (date != null && this.date != null) {
-                return date.after(this.date);
+            if (dateToMatch != null && this.date != null) {
+                // We consider the date matching even if it's slightly behind this marker's date (which
+                // is likely to come from a notification timestamp), because GH notification timestamps
+                // tend to be ~10 seconds ahead the event that triggered them
+                long dateDiff = this.date.getTime() - dateToMatch.getTime();
+                return dateDiff >= 0 && dateDiff < TimeUnit.SECONDS.toMillis(30);
             }
             return false;
         }

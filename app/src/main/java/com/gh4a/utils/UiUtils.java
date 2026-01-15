@@ -1,26 +1,9 @@
 package com.gh4a.utils;
 
-import android.Manifest;
-import android.annotation.TargetApi;
 import android.app.Dialog;
-import android.app.DownloadManager;
 import android.content.Context;
-import android.content.DialogInterface;
-import android.content.pm.PackageManager;
 import android.content.res.TypedArray;
 import android.graphics.Color;
-import android.net.ConnectivityManager;
-import android.net.Uri;
-import android.os.Build;
-import android.os.Environment;
-import androidx.annotation.AttrRes;
-import androidx.annotation.ColorInt;
-import androidx.annotation.NonNull;
-import androidx.annotation.StringRes;
-import androidx.core.app.ActivityCompat;
-import androidx.core.content.ContextCompat;
-import androidx.appcompat.app.AlertDialog;
-import androidx.recyclerview.widget.RecyclerView;
 import android.text.Editable;
 import android.text.SpannableStringBuilder;
 import android.text.TextWatcher;
@@ -31,22 +14,31 @@ import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewTreeObserver;
+import android.view.animation.Animation;
+import android.view.animation.AnimationUtils;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.EdgeEffect;
 import android.widget.EditText;
 import android.widget.MultiAutoCompleteTextView;
 import android.widget.TextView;
 
-import com.gh4a.BaseActivity;
-import com.gh4a.Gh4Application;
 import com.gh4a.R;
 import com.gh4a.widget.IssueLabelSpan;
 import com.meisolsson.githubsdk.model.Label;
+import com.vdurmont.emoji.EmojiParser;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.List;
+
+import androidx.annotation.AttrRes;
+import androidx.annotation.ColorInt;
+import androidx.annotation.NonNull;
+import androidx.annotation.StringRes;
+import androidx.appcompat.app.AlertDialog;
+import androidx.core.content.ContextCompat;
+import androidx.recyclerview.widget.RecyclerView;
 
 public class UiUtils {
     public static void hideImeForView(View view) {
@@ -79,19 +71,32 @@ public class UiUtils {
         return ContextCompat.getColor(context, R.color.label_fg_light);
     }
 
-    public static void trySetListOverscrollColor(RecyclerView view, int color) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            RecyclerViewEdgeColorHelper helper =
-                    (RecyclerViewEdgeColorHelper) view.getTag(R.id.EdgeColorHelper);
-            if (helper == null) {
-                helper = new RecyclerViewEdgeColorHelper(view);
-                view.setTag(R.id.EdgeColorHelper, helper);
-            }
-            helper.setColor(color);
+    public static void updateViewVisibility(View view, boolean animate, boolean show) {
+        int visibility = show ? View.VISIBLE : View.GONE;
+        if (view.getVisibility() == visibility) {
+            return;
         }
+
+        if (animate) {
+            Animation anim = AnimationUtils.loadAnimation(view.getContext(),
+                    show ? android.R.anim.fade_in : android.R.anim.fade_out);
+            view.startAnimation(anim);
+        } else {
+            view.clearAnimation();
+        }
+        view.setVisibility(visibility);
     }
 
-    @TargetApi(21)
+    public static void trySetListOverscrollColor(RecyclerView view, int color) {
+        RecyclerViewEdgeColorHelper helper =
+                (RecyclerViewEdgeColorHelper) view.getTag(R.id.EdgeColorHelper);
+        if (helper == null) {
+            helper = new RecyclerViewEdgeColorHelper(view);
+            view.setTag(R.id.EdgeColorHelper, helper);
+        }
+        helper.setColor(color);
+    }
+
     private static class RecyclerViewEdgeColorHelper implements ViewTreeObserver.OnGlobalLayoutListener {
         private final RecyclerView mView;
         private int mColor;
@@ -211,78 +216,6 @@ public class UiUtils {
         return color;
     }
 
-    private static void enqueueDownload(Context context, Uri uri, String fileName,
-            String description, String mimeType, String mediaType, boolean wifiOnly) {
-        final DownloadManager dm = (DownloadManager) context.getSystemService(Context.DOWNLOAD_SERVICE);
-        DownloadManager.Request request = new DownloadManager.Request(uri)
-                .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
-                .setDescription(description)
-                .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                .setAllowedOverRoaming(false);
-
-        if (mediaType != null) {
-            request.addRequestHeader("Accept", mediaType);
-        }
-        if (mimeType != null) {
-            request.setMimeType(mimeType);
-        }
-        if (wifiOnly) {
-            request.setAllowedOverMetered(false);
-        }
-
-        dm.enqueue(request);
-    }
-
-    public static void enqueueDownloadWithPermissionCheck(final BaseActivity activity,
-            final String url, final String mimeType, final String fileName,
-            final String description, final String mediaType) {
-        final ActivityCompat.OnRequestPermissionsResultCallback cb =
-                (requestCode, permissions, grantResults) -> {
-                    if (grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                        enqueueDownload(activity, url, mimeType, fileName, description, mediaType);
-                    }
-                };
-        activity.requestPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE, cb,
-                R.string.download_permission_rationale);
-    }
-
-    private static void enqueueDownload(final Context context, String url, final String mimeType,
-            final String fileName, final String description, final String mediaType) {
-        if (url == null) {
-            return;
-        }
-
-        final Uri uri = Uri.parse(url).buildUpon()
-                .appendQueryParameter("access_token", Gh4Application.get().getAuthToken())
-                .build();
-
-        if (!downloadNeedsWarning(context)) {
-            enqueueDownload(context, uri, fileName, description, mimeType, mediaType, false);
-            return;
-        }
-
-        DialogInterface.OnClickListener buttonListener = (dialog, which) -> {
-            boolean wifiOnly = which == DialogInterface.BUTTON_NEUTRAL;
-            enqueueDownload(context, uri, fileName, description,
-                    mimeType, mediaType, wifiOnly);
-        };
-
-        new AlertDialog.Builder(context)
-                .setTitle(R.string.download_mobile_warning_title)
-                .setMessage(R.string.download_mobile_warning_message)
-                .setPositiveButton(R.string.download_now_button, buttonListener)
-                .setNeutralButton(R.string.download_wifi_button, buttonListener)
-                .setNegativeButton(R.string.cancel, null)
-                .show();
-    }
-
-    @SuppressWarnings("BooleanMethodIsAlwaysInverted")
-    public static boolean downloadNeedsWarning(Context context) {
-        ConnectivityManager cm =
-                (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
-        return cm.isActiveNetworkMetered();
-    }
-
     public static abstract class EmptinessWatchingTextWatcher implements TextWatcher {
         public EmptinessWatchingTextWatcher(EditText editor) {
             afterTextChanged(editor.getText());
@@ -388,8 +321,9 @@ public class UiUtils {
         for (Label label : labels) {
             int pos = builder.length();
             IssueLabelSpan span = new IssueLabelSpan(context, label, true);
-            builder.append(label.name());
-            builder.setSpan(span, pos, pos + label.name().length(), 0);
+            String labelName = EmojiParser.parseToUnicode(label.name());
+            builder.append(labelName);
+            builder.setSpan(span, pos, pos + labelName.length(), 0);
         }
         return builder;
     }

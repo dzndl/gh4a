@@ -16,19 +16,27 @@
 package com.gh4a.utils;
 
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.graphics.Typeface;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import android.text.SpannableStringBuilder;
 import android.text.format.DateUtils;
+import android.text.style.ForegroundColorSpan;
+import android.text.style.RelativeSizeSpan;
+import android.text.style.StyleSpan;
 import android.util.Base64;
+import android.widget.TextView;
 
 import com.gh4a.Gh4Application;
-import com.gh4a.widget.CustomTypefaceSpan;
-import com.gh4a.widget.StyleableTextView;
+import com.gh4a.widget.IssueLabelSpan;
+import com.meisolsson.githubsdk.model.Label;
 import com.meisolsson.githubsdk.model.User;
+import com.vdurmont.emoji.EmojiParser;
 
 import java.util.Date;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -49,33 +57,15 @@ public class StringUtils {
         return val == null || val.trim().isEmpty();
     }
 
-    /**
-     * Do teaser.
-     *
-     * @param text the text
-     * @return the string
-     */
-    public static String doTeaser(String text) {
-        if (isBlank(text)) {
-            return "";
+    public static String getFirstLine(String input) {
+        if (input == null) {
+            return null;
         }
-
-        int indexNewLine = text.indexOf("\n");
-        int indexDot = text.indexOf(". ");
-
-        if (indexDot != -1 && indexNewLine != -1) {
-            if (indexDot > indexNewLine) {
-                text = text.substring(0, indexNewLine);
-            } else {
-                text = text.substring(0, indexDot + 1);
-            }
-        } else if (indexDot != -1) {
-            text = text.substring(0, indexDot + 1);
-        } else if (indexNewLine != -1) {
-            text = text.substring(0, indexNewLine);
+        int pos = input.indexOf('\n');
+        if (pos < 0) {
+            return input;
         }
-
-        return text;
+        return input.substring(0, pos);
     }
 
     /**
@@ -94,6 +84,9 @@ public class StringUtils {
     }
 
     public static CharSequence formatRelativeTime(Context context, Date date, boolean showDateIfLongAgo) {
+        if (date == null) {
+            return null;
+        }
         long now = System.currentTimeMillis();
         long time = date.getTime();
         long duration = Math.abs(now - time);
@@ -110,12 +103,12 @@ public class StringUtils {
                 | DateUtils.FORMAT_SHOW_YEAR);
     }
 
-    public static void applyBoldTagsAndSetText(StyleableTextView view, String input) {
-        SpannableStringBuilder text = applyBoldTags(input, view.getTypefaceValue());
+    public static void applyBoldTagsAndSetText(TextView view, String input) {
+        SpannableStringBuilder text = applyBoldTags(input);
         view.setText(text);
     }
 
-    public static SpannableStringBuilder applyBoldTags(String input, int baseTypefaceValue) {
+    public static SpannableStringBuilder applyBoldTags(String input) {
         SpannableStringBuilder ssb = new SpannableStringBuilder();
         int pos = 0;
 
@@ -127,16 +120,36 @@ public class StringUtils {
                 ssb.append(input.substring(pos, start));
                 ssb.append(input.substring(start + 3, end));
 
-                Object span = new CustomTypefaceSpan(baseTypefaceValue, Typeface.BOLD);
+                Object span = new StyleSpan(Typeface.BOLD);
                 ssb.setSpan(span, ssb.length() - tokenLength, ssb.length(), 0);
 
                 pos = end + 4;
             } else {
-                ssb.append(input.substring(pos, input.length()));
+                ssb.append(input.substring(pos));
                 pos = -1;
             }
         }
         return ssb;
+    }
+
+    public static void replaceLabelPlaceholder(Context context, SpannableStringBuilder text,
+                                               Label label) {
+        int pos = text.toString().indexOf("[label]");
+        if (label != null && pos >= 0) {
+            String labelName = EmojiParser.parseToUnicode(label.name());
+            int length = labelName.length();
+            text.replace(pos, pos + 7, labelName);
+            text.setSpan(new IssueLabelSpan(context, label, false), pos, pos + length, 0);
+        }
+    }
+
+    public static void addUserTypeSpan(Context context, SpannableStringBuilder builder,
+                                       int pos, String userType) {
+        builder.insert(pos, " (" + userType + ")");
+        int typeLength = userType.length() + 3;
+        builder.setSpan(new RelativeSizeSpan(0.85f), pos, pos + typeLength, 0);
+        int color = UiUtils.resolveColor(context, android.R.attr.textColorSecondary);
+        builder.setSpan(new ForegroundColorSpan(color), pos, pos + typeLength, 0);
     }
 
     @Nullable
@@ -177,5 +190,22 @@ public class StringUtils {
 
     public static String fromBase64(String encoded) {
         return new String(Base64.decode(encoded, Base64.DEFAULT));
+    }
+
+    public static Set<String> getEditableStringSetFromPrefs(SharedPreferences prefs, String key) {
+        final Set<String> value = prefs.getStringSet(key, null);
+        return value != null ? new HashSet<>(value) : new HashSet<>();
+    }
+
+    public static String unescapeCommonHtmlEntities(String sourceText) {
+        return sourceText.replace("&lt;", "<")
+                .replace("&gt;", ">")
+                .replace("&amp;", "&")
+                .replaceAll("&(lsquo|#8216);", "‘")
+                .replaceAll("&(rsquo|#8217);", "’")
+                .replaceAll("&(ldquo|#8220);", "“")
+                .replaceAll("&(rdquo|#8221);", "”")
+                .replaceAll("&(ndash|#8211);", "–")
+                .replaceAll("&(mdash|#8212);", "—");
     }
 }

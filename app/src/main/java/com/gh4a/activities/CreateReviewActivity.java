@@ -10,13 +10,12 @@ import androidx.appcompat.app.AppCompatActivity;
 import android.view.View;
 import android.widget.ArrayAdapter;
 import android.widget.Spinner;
+import android.widget.TextView;
 
-import com.gh4a.Gh4Application;
 import com.gh4a.R;
 import com.gh4a.ServiceFactory;
 import com.gh4a.utils.ApiHelpers;
 import com.gh4a.widget.EditorBottomSheet;
-import com.gh4a.widget.StyleableTextView;
 import com.meisolsson.githubsdk.model.Review;
 import com.meisolsson.githubsdk.model.request.pull_request.CreateReview;
 import com.meisolsson.githubsdk.model.request.pull_request.SubmitReview;
@@ -30,14 +29,16 @@ public class CreateReviewActivity extends AppCompatActivity implements
     private static final String EXTRA_OWNER = "owner";
     private static final String EXTRA_REPO = "repo";
     private static final String EXTRA_PR_NUMBER = "pr_number";
+    private static final String EXTRA_DRAFT_PR = "draft_pr";
     private static final String EXTRA_PENDING_REVIEW = "pending_review";
 
     protected static Intent makeIntent(Context context, String repoOwner, String repoName,
-            int pullRequestNumber, Review pendingReview) {
+            int pullRequestNumber, boolean isDraftPR, Review pendingReview) {
         return new Intent(context, CreateReviewActivity.class)
                 .putExtra(EXTRA_OWNER, repoOwner)
                 .putExtra(EXTRA_REPO, repoName)
                 .putExtra(EXTRA_PR_NUMBER, pullRequestNumber)
+                .putExtra(EXTRA_DRAFT_PR, isDraftPR)
                 .putExtra(EXTRA_PENDING_REVIEW, pendingReview);
     }
 
@@ -70,6 +71,10 @@ public class CreateReviewActivity extends AppCompatActivity implements
         View header = getLayoutInflater().inflate(R.layout.create_review_header, null);
         mEditorSheet.addHeaderView(header);
         mEditorSheet.setAllowEmpty(true);
+        boolean isDraftPR = extras.getBoolean(EXTRA_DRAFT_PR);
+        if (isDraftPR) {
+            mEditorSheet.setHighlightColor(R.attr.colorPullRequestDraft);
+        }
 
         mReviewEventAdapter = new ArrayAdapter<>(this, R.layout.spinner_item);
         mReviewEventAdapter.add(new ReviewEventDesc(R.string.pull_request_review_event_comment,
@@ -82,7 +87,7 @@ public class CreateReviewActivity extends AppCompatActivity implements
         mReviewEventSpinner = header.findViewById(R.id.pull_request_review_event);
         mReviewEventSpinner.setAdapter(mReviewEventAdapter);
 
-        StyleableTextView titleView = header.findViewById(R.id.review_dialog_title);
+        TextView titleView = header.findViewById(R.id.review_dialog_title);
         titleView.setText(getString(R.string.pull_request_review_dialog_title, mPullRequestNumber));
 
         mEditorSheet.setCallback(this);
@@ -101,7 +106,6 @@ public class CreateReviewActivity extends AppCompatActivity implements
     @Override
     public Single<?> onEditorDoSend(String body) {
         int position = mReviewEventSpinner.getSelectedItemPosition();
-        @SuppressWarnings("ConstantConditions")
         ReviewEventDesc desc = mReviewEventAdapter.getItem(position);
 
         PullRequestReviewService service = ServiceFactory.get(PullRequestReviewService.class, false);

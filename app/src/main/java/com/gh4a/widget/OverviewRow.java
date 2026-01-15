@@ -48,7 +48,7 @@ public class OverviewRow extends LinearLayoutCompat implements View.OnClickListe
         mIcon = findViewById(R.id.icon);
         mLabel = findViewById(R.id.label);
         mRedirectNotice = findViewById(R.id.forward_notice);
-        mProgress = findViewById(R.id.progress);
+        mProgress = findViewById(R.id.progress_indicator);
 
         final TypedArray a = getContext().obtainStyledAttributes(
                 attrs, R.styleable.OverviewRow, defStyle, 0);
@@ -110,7 +110,7 @@ public class OverviewRow extends LinearLayoutCompat implements View.OnClickListe
         TooltipCompat.setTooltipText(mIcon, active ? mActionHintChecked : mActionHintUnchecked);
     }
 
-    private void setIcon(Drawable icon) {
+    public void setIcon(Drawable icon) {
         if (icon == null) {
             mIcon.setVisibility(View.GONE);
         } else {
@@ -127,7 +127,7 @@ public class OverviewRow extends LinearLayoutCompat implements View.OnClickListe
             return;
         }
         int tintColor = UiUtils.resolveColor(getContext(),
-                mIconClickListener != null ? R.attr.colorAccent : R.attr.colorIconForeground);
+                mIconClickListener != null ? androidx.appcompat.R.attr.colorAccent : R.attr.colorIconForeground);
         DrawableCompat.setTint(drawable, tintColor);
         DrawableCompat.setTintMode(drawable, PorterDuff.Mode.SRC_IN);
     }

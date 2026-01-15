@@ -21,10 +21,15 @@ import android.content.DialogInterface;
 import android.content.Intent;
 import android.graphics.Typeface;
 import android.os.Bundle;
+
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.IdRes;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
+import com.gh4a.adapter.ItemsWithDescriptionAdapter;
+import com.gh4a.utils.ActivityResultHelpers;
 import com.google.android.material.appbar.AppBarLayout;
 
 import androidx.appcompat.view.ContextThemeWrapper;
@@ -39,11 +44,9 @@ import androidx.appcompat.app.AlertDialog;
 
 import android.os.Parcel;
 import android.os.Parcelable;
-import android.text.TextUtils;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.ArrayAdapter;
 import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.TextView;
@@ -54,10 +57,8 @@ import com.gh4a.R;
 import com.gh4a.ServiceFactory;
 import com.gh4a.utils.ApiHelpers;
 import com.gh4a.utils.AvatarHandler;
-import com.gh4a.utils.Optional;
 import com.gh4a.utils.RxUtils;
 import com.gh4a.utils.SingleFactory;
-import com.gh4a.utils.StringUtils;
 import com.gh4a.utils.UiUtils;
 import com.gh4a.widget.MarkdownButtonsBar;
 import com.gh4a.widget.MarkdownPreviewWebView;
@@ -73,13 +74,15 @@ import com.meisolsson.githubsdk.service.issues.IssueMilestoneService;
 import com.meisolsson.githubsdk.service.issues.IssueService;
 import com.meisolsson.githubsdk.service.repositories.RepositoryCollaboratorService;
 import com.meisolsson.githubsdk.service.repositories.RepositoryContentService;
+import com.vdurmont.emoji.EmojiParser;
 
 import java.net.HttpURLConnection;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -87,22 +90,32 @@ import io.reactivex.Flowable;
 import io.reactivex.Single;
 import retrofit2.Response;
 
+import static java.util.stream.Collectors.toList;
+
 public class IssueEditActivity extends BasePagerActivity implements
         AppBarLayout.OnOffsetChangedListener, View.OnClickListener,
         View.OnFocusChangeListener {
     public static Intent makeCreateIntent(Context context, String repoOwner, String repoName) {
         // can't reuse makeEditIntent here, because even a null extra counts for hasExtra()
         return new Intent(context, IssueEditActivity.class)
-                .putExtra("owner", repoOwner)
-                .putExtra("repo", repoName);
+                .putExtra(EXTRA_KEY_OWNER, repoOwner)
+                .putExtra(EXTRA_KEY_REPO, repoName);
+    }
+
+    public static Intent makeCreateIntent(Context context, String repoOwner, String repoName, String title, String body) {
+        return new Intent(context, IssueEditActivity.class)
+                .putExtra(EXTRA_KEY_OWNER, repoOwner)
+                .putExtra(EXTRA_KEY_REPO, repoName)
+                .putExtra(EXTRA_KEY_TITLE, title)
+                .putExtra(EXTRA_KEY_BODY, body);
     }
 
     public static Intent makeEditIntent(Context context, String repoOwner,
             String repoName, Issue issue) {
         return new Intent(context, IssueEditActivity.class)
-                .putExtra("owner", repoOwner)
-                .putExtra("repo", repoName)
-                .putExtra("issue", issue);
+                .putExtra(EXTRA_KEY_OWNER, repoOwner)
+                .putExtra(EXTRA_KEY_REPO, repoName)
+                .putExtra(EXTRA_KEY_ISSUE, issue);
     }
 
     private interface OnAssigneesLoaded {
@@ -115,14 +128,17 @@ public class IssueEditActivity extends BasePagerActivity implements
         void handleLoad(List<Milestone> milestones);
     }
 
-    private static final int REQUEST_MANAGE_LABELS = 1000;
-    private static final int REQUEST_MANAGE_MILESTONES = 1001;
-
     private static final int ID_LOADER_COLLABORATOR_STATUS = 0;
+    private static final int[] TITLES = { R.string.issue_body, R.string.preview, R.string.settings };
 
-    private static final int[] TITLES = {
-        R.string.issue_body, R.string.preview, R.string.settings
-    };
+    private final ActivityResultLauncher<Intent> mLabelManagerLauncher = registerForActivityResult(
+            new ActivityResultContracts.StartActivityForResult(),
+            new ActivityResultHelpers.ActivityResultSuccessCallback(() -> mLabelSingle = null)
+    );
+    private final ActivityResultLauncher<Intent> mMilestoneManagerLauncher = registerForActivityResult(
+            new ActivityResultContracts.StartActivityForResult(),
+            new ActivityResultHelpers.ActivityResultSuccessCallback(() -> mMilestoneSingle = null)
+    );
 
     private String mRepoOwner;
     private String mRepoName;
@@ -146,6 +162,12 @@ public class IssueEditActivity extends BasePagerActivity implements
     private TextView mSelectedMilestoneView;
     private ViewGroup mSelectedAssigneeContainer;
     private TextView mLabelsView;
+
+    private static final String EXTRA_KEY_TITLE = "title";
+    private static final String EXTRA_KEY_BODY = "body";
+    private static final String EXTRA_KEY_OWNER = "owner";
+    private static final String EXTRA_KEY_REPO = "repo";
+    private static final String EXTRA_KEY_ISSUE = "issue";
 
     private static final String STATE_KEY_ISSUE = "issue";
     private static final String STATE_KEY_ORIGINAL_ISSUE = "original_issue";
@@ -207,7 +229,7 @@ public class IssueEditActivity extends BasePagerActivity implements
 
         loadCollaboratorStatus(false);
 
-        if (savedInstanceState == null && !isInEditMode()) {
+        if (savedInstanceState == null && !isEditingExistingIssue() && !isContentGivenViaIntent()) {
             loadIssueTemplates();
             mTitleView.setEnabled(false);
             mDescView.setEnabled(false);
@@ -240,7 +262,7 @@ public class IssueEditActivity extends BasePagerActivity implements
     @Override
     protected String getActionBarTitle() {
         boolean isPullRequest = mEditIssue.pullRequest() != null;
-        return !isInEditMode()
+        return !isEditingExistingIssue()
                 ? getString(R.string.issue_create)
                 : isPullRequest
                         ? getString(R.string.pull_request_edit_title, mEditIssue.number())
@@ -263,12 +285,12 @@ public class IssueEditActivity extends BasePagerActivity implements
     @Override
     protected void onInitExtras(Bundle extras) {
         super.onInitExtras(extras);
-        mRepoOwner = extras.getString("owner");
-        mRepoName = extras.getString("repo");
+        mRepoOwner = extras.getString(EXTRA_KEY_OWNER);
+        mRepoName = extras.getString(EXTRA_KEY_REPO);
         // If mEditIssue is != null here, it was restored from saved state
         if (mEditIssue == null) {
-            if (extras.containsKey("issue")) {
-                mEditIssue = extras.getParcelable("issue");
+            if (extras.containsKey(EXTRA_KEY_ISSUE)) {
+                mEditIssue = extras.getParcelable(EXTRA_KEY_ISSUE);
                 // Save only editable fields
                 mOriginalIssue = Issue.builder()
                         .title(mEditIssue.title())
@@ -278,7 +300,10 @@ public class IssueEditActivity extends BasePagerActivity implements
                         .labels(mEditIssue.labels())
                         .build();
             } else {
-                mEditIssue = Issue.builder().build();
+                mEditIssue = Issue.builder()
+                        .title(extras.getString(EXTRA_KEY_TITLE))
+                        .body(extras.getString(EXTRA_KEY_BODY))
+                        .build();
                 mOriginalIssue = Issue.builder().build();
             }
         }
@@ -309,8 +334,12 @@ public class IssueEditActivity extends BasePagerActivity implements
                 mRootView.getPaddingRight(), appBarLayout.getTotalScrollRange() + verticalOffset);
     }
 
-    private boolean isInEditMode() {
-        return getIntent().hasExtra("issue");
+    private boolean isEditingExistingIssue() {
+        return getIntent().hasExtra(EXTRA_KEY_ISSUE);
+    }
+
+    private boolean isContentGivenViaIntent() {
+        return getIntent().hasExtra(EXTRA_KEY_TITLE) && getIntent().hasExtra(EXTRA_KEY_BODY);
     }
 
     @Override
@@ -347,7 +376,7 @@ public class IssueEditActivity extends BasePagerActivity implements
 
     @Override
     protected Intent navigateUp() {
-        if (!isInEditMode()) {
+        if (!isEditingExistingIssue()) {
             return IssueListActivity.makeIntent(this, mRepoOwner, mRepoName);
         }
         if (mEditIssue.pullRequest() != null) {
@@ -355,23 +384,6 @@ public class IssueEditActivity extends BasePagerActivity implements
                     mEditIssue.number());
         }
         return IssueActivity.makeIntent(this, mRepoOwner, mRepoName, mEditIssue.number());
-    }
-
-    @Override
-    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        if (requestCode == REQUEST_MANAGE_LABELS) {
-            if (resultCode == RESULT_OK) {
-                // Require reload of labels
-                mLabelSingle = null;
-            }
-        } else if (requestCode == REQUEST_MANAGE_MILESTONES) {
-            if (resultCode == RESULT_OK) {
-                // Require reload of milestones
-                mMilestoneSingle = null;
-            }
-        } else {
-            super.onActivityResult(requestCode, resultCode, data);
-        }
     }
 
     private void showMilestonesDialog() {
@@ -426,13 +438,13 @@ public class IssueEditActivity extends BasePagerActivity implements
     private void manageMilestones() {
         Intent intent = IssueMilestoneListActivity.makeIntent(this, mRepoOwner, mRepoName,
                 mEditIssue.pullRequest() != null);
-        startActivityForResult(intent, REQUEST_MANAGE_MILESTONES);
+        mMilestoneManagerLauncher.launch(intent);
     }
 
     private void manageLabels() {
         Intent intent = IssueLabelListActivity.makeIntent(this, mRepoOwner, mRepoName,
                 mEditIssue.pullRequest() != null);
-        startActivityForResult(intent, REQUEST_MANAGE_LABELS);
+        mLabelManagerLauncher.launch(intent);
     }
 
     private void updateOptionViews() {
@@ -507,7 +519,7 @@ public class IssueEditActivity extends BasePagerActivity implements
                 : getString(R.string.issue_error_create);
 
         IssueService service = ServiceFactory.get(IssueService.class, false);
-        Single<Response<Issue>> single = isInEditMode()
+        Single<Response<Issue>> single = isEditingExistingIssue()
                 ? service.editIssue(mRepoOwner, mRepoName, issueNumber, builder.build())
                 : service.createIssue(mRepoOwner, mRepoName, builder.build());
 
@@ -533,7 +545,7 @@ public class IssueEditActivity extends BasePagerActivity implements
     }
 
     private void loadLabels(OnLabelsLoaded callback) {
-        final IssueLabelService service = ServiceFactory.get(IssueLabelService.class, false);
+        var service = ServiceFactory.getForFullPagedLists(IssueLabelService.class, false);
         if (mLabelSingle == null) {
             mLabelSingle = ApiHelpers.PageIterator
                     .toSingle(page -> service.getRepositoryLabels(mRepoOwner, mRepoName, page))
@@ -546,7 +558,7 @@ public class IssueEditActivity extends BasePagerActivity implements
     }
 
     private void loadMilestones(OnMilestonesLoaded callback) {
-        final IssueMilestoneService service = ServiceFactory.get(IssueMilestoneService.class, false);
+        var service = ServiceFactory.getForFullPagedLists(IssueMilestoneService.class, false);
         if (mMilestoneSingle == null) {
             mMilestoneSingle = ApiHelpers.PageIterator
                     .toSingle(page -> service
@@ -560,8 +572,7 @@ public class IssueEditActivity extends BasePagerActivity implements
     }
 
     private void loadPotentialAssignees(OnAssigneesLoaded callback) {
-        final RepositoryCollaboratorService service =
-                ServiceFactory.get(RepositoryCollaboratorService.class, false);
+        var service = ServiceFactory.getForFullPagedLists(RepositoryCollaboratorService.class, false);
 
         if (mAssigneeSingle == null) {
             mAssigneeSingle = ApiHelpers.PageIterator
@@ -584,8 +595,8 @@ public class IssueEditActivity extends BasePagerActivity implements
 
     private void loadIssueTemplates() {
         registerTemporarySubscription(getIssueTemplatesSingle("/.github")
-                .flatMap(opt -> opt.orOptionalSingle(() -> getIssueTemplatesSingle("")))
-                .flatMap(opt -> opt.orOptionalSingle(() -> getIssueTemplatesSingle("/docs")))
+                .flatMap(opt -> RxUtils.toSingleOrFallback(opt, () -> getIssueTemplatesSingle("")))
+                .flatMap(opt -> RxUtils.toSingleOrFallback(opt, () -> getIssueTemplatesSingle("/docs")))
                 .compose(RxUtils.wrapWithProgressDialog(this, R.string.loading_msg))
                 .subscribe(result -> {
                     if (result.isPresent() && !result.get().isEmpty()) {
@@ -593,8 +604,12 @@ public class IssueEditActivity extends BasePagerActivity implements
                         if (templates.size() == 1) {
                             handleIssueTemplateSelected(templates.get(0));
                         } else {
+                            List<IssueTemplate> namedTemplates = templates.stream()
+                                    .filter(template -> template.name != null)
+                                    .sorted(Comparator.comparing(template -> template.name))
+                                    .collect(toList());
                             IssueTemplateSelectionDialogFragment f =
-                                    IssueTemplateSelectionDialogFragment.newInstance(templates);
+                                    IssueTemplateSelectionDialogFragment.newInstance(namedTemplates);
                             f.show(getSupportFragmentManager(), "template-selection");
                         }
                     } else {
@@ -648,14 +663,14 @@ public class IssueEditActivity extends BasePagerActivity implements
     private Single<Optional<List<IssueTemplate>>> getIssueTemplatesSingle(String path) {
         RepositoryContentService service = ServiceFactory.get(RepositoryContentService.class, false);
         return ApiHelpers.PageIterator
-                .toSingle(page -> service.getDirectoryContents(mRepoOwner, mRepoName, path, null, page))
-                .compose(RxUtils.filterAndMapToFirst(c -> c.name().toLowerCase(Locale.US).startsWith("issue_template")))
-                .flatMap(contentOpt -> contentOpt.flatMap(content -> {
+                .first(page -> service.getDirectoryContents(mRepoOwner, mRepoName, path, null, page),
+                        c -> c.name().toLowerCase(Locale.US).startsWith("issue_template"))
+                .flatMap(contentOpt -> RxUtils.mapToSingle(contentOpt, content -> {
                     if (content.type() == ContentType.Directory) {
                         return ApiHelpers.PageIterator
                                 .toSingle(page -> service.getDirectoryContents(mRepoOwner, mRepoName, content.path(), null, page));
                     } else {
-                        return Single.just(Arrays.asList(content));
+                        return Single.just(Collections.singletonList(content));
                     }
                 }))
                 .map(contentsOpt -> contentsOpt.map(contents -> {
@@ -667,25 +682,24 @@ public class IssueEditActivity extends BasePagerActivity implements
                     }
                     return files;
                 }))
-                .flatMap(contentsOpt -> contentsOpt.flatMap(contents -> {
+                .flatMap(contentsOpt -> RxUtils.mapToSingle(contentsOpt, contents -> {
                     List<Single<IssueTemplate>> result = new ArrayList<>();
                     for (Content c : contents) {
                         result.add(parseTemplate(service, c));
                     }
                     return Flowable.fromIterable(result)
                             .flatMap(flowable -> flowable.toFlowable())
-                            .filter(template -> template != null)
                             .toList();
                 }))
                 .compose(RxUtils::doInBackground)
-                .compose(RxUtils.mapFailureToValue(HttpURLConnection.HTTP_NOT_FOUND, Optional.absent()));
+                .compose(RxUtils.mapFailureToValue(HttpURLConnection.HTTP_NOT_FOUND, Optional.empty()));
     }
 
     private Single<IssueTemplate> parseTemplate(RepositoryContentService service, Content content) {
-        return service.getContents(mRepoOwner, mRepoName, content.path(), null)
+        return service.getContentsRaw(mRepoOwner, mRepoName, content.path(), null)
             .map(ApiHelpers::throwOnFailure)
-            .map(fileContent -> StringUtils.fromBase64(fileContent.content()))
-            .map(contentString -> IssueTemplate.parse(contentString))
+            .map(bytes -> new String(bytes))
+            .map(IssueTemplate::new)
             .compose(RxUtils::doInBackground);
     }
 
@@ -700,12 +714,7 @@ public class IssueEditActivity extends BasePagerActivity implements
         final List<String> defaultLabels = new ArrayList<>();
         final List<String> defaultAssignees = new ArrayList<>();
 
-        public static IssueTemplate parse(String contentString) {
-            IssueTemplate t = new IssueTemplate(contentString);
-            return t.name != null ? t : null;
-        }
-
-        private IssueTemplate(String contentString) {
+        IssueTemplate(String contentString) {
             Matcher matcher = FRONT_MATTER_PATTERN.matcher(contentString);
             if (matcher.matches()) {
                 content = matcher.group(6);
@@ -778,8 +787,7 @@ public class IssueEditActivity extends BasePagerActivity implements
         }
     }
 
-    public static class IssueTemplateSelectionDialogFragment extends DialogFragment
-            implements DialogInterface.OnClickListener, DialogInterface.OnCancelListener {
+    public static class IssueTemplateSelectionDialogFragment extends DialogFragment {
         private List<IssueTemplate> mTemplates;
 
         public static IssueTemplateSelectionDialogFragment newInstance(List<IssueTemplate> templates) {
@@ -793,57 +801,26 @@ public class IssueEditActivity extends BasePagerActivity implements
         @NonNull
         @Override
         public Dialog onCreateDialog(Bundle savedInstanceState) {
-            Bundle args = getArguments();
-            mTemplates = args.getParcelableArrayList("templates");
+            mTemplates = requireArguments().getParcelableArrayList("templates");
+            var templateItems = mTemplates.stream()
+                    .map(template -> new ItemsWithDescriptionAdapter.Item(template.name, template.description))
+                    .collect(toList());
 
-            return new AlertDialog.Builder(getContext())
+            var activity = (IssueEditActivity) requireActivity();
+            return new AlertDialog.Builder(activity)
                     .setTitle(R.string.issue_template_dialog_title)
-                    .setSingleChoiceItems(new Adapter(getContext(), mTemplates), -1, this)
-                    .setOnCancelListener(this)
-                    .setNegativeButton(R.string.cancel, null)
+                    .setAdapter(
+                        new ItemsWithDescriptionAdapter(activity, templateItems),
+                        (dialog, itemIndex) -> activity.handleIssueTemplateSelected(mTemplates.get(itemIndex))
+                    )
+                    .setNegativeButton(R.string.cancel, (dialog, _btn) -> dialog.cancel())
                     .create();
-        }
-
-        @Override
-        public void onClick(DialogInterface dialog, int which) {
-            ((IssueEditActivity) getActivity()).handleIssueTemplateSelected(mTemplates.get(which));
-            dialog.dismiss();
         }
 
         @Override
         public void onCancel(@NonNull DialogInterface dialog) {
             super.onCancel(dialog);
-            ((IssueEditActivity) getActivity()).handleIssueTemplateSelected(null);
-        }
-
-        private static class Adapter extends ArrayAdapter<IssueTemplate> {
-            private LayoutInflater mInflater;
-
-            public Adapter(Context context, List<IssueTemplate> templates) {
-                super(context, R.layout.row_issue_template, templates);
-                mInflater = LayoutInflater.from(context);
-            }
-
-            @NonNull
-            @Override
-            public View getView(int position, @Nullable View convertView, @NonNull ViewGroup parent) {
-                final View view;
-                if (convertView == null) {
-                    view = mInflater.inflate(R.layout.row_issue_template, parent, false);
-                } else {
-                    view = convertView;
-                }
-
-                TextView title = view.findViewById(R.id.title);
-                TextView description = view.findViewById(R.id.description);
-                IssueTemplate template = getItem(position);
-
-                title.setText(template.name);
-                description.setText(template.description);
-                description.setVisibility(TextUtils.isEmpty(template.description) ? View.GONE : View.VISIBLE);
-
-                return view;
-            }
+            ((IssueEditActivity) requireActivity()).handleIssueTemplateSelected(null);
         }
     }
 
@@ -1014,7 +991,7 @@ public class IssueEditActivity extends BasePagerActivity implements
                 viewColor.setBackgroundColor(ApiHelpers.colorForLabel(label));
 
                 final TextView tvLabel = rowView.findViewById(R.id.tv_title);
-                tvLabel.setText(label.name());
+                tvLabel.setText(EmojiParser.parseToUnicode(label.name()));
                 tvLabel.setOnClickListener(clickListener);
                 tvLabel.setTag(label);
 
@@ -1031,7 +1008,7 @@ public class IssueEditActivity extends BasePagerActivity implements
                     .setPositiveButton(R.string.ok, (dialog, which) -> {
                         activity.updateLabels(selectedLabels);
                     })
-                    .setNeutralButton(R.string.issue_manage_labels, (dialog, which) -> {
+                    .setNeutralButton(R.string.issue_manage, (dialog, which) -> {
                         activity.manageLabels();
                     })
                     .create();

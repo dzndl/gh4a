@@ -12,10 +12,10 @@ import android.graphics.Color;
 import android.graphics.ColorFilter;
 import android.graphics.Paint;
 import android.graphics.Rect;
+import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.TransitionDrawable;
 import android.net.Uri;
-import android.os.Build;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.Looper;
@@ -87,7 +87,7 @@ public class AvatarHandler {
                     applyAvatarToView(view, bitmap);
                 }
             }
-            sRequests.delete(requestId);
+            sRequests.remove(requestId);
         }
     };
 
@@ -192,12 +192,7 @@ public class AvatarHandler {
 
             @Override
             protected int sizeOf(Long key, Bitmap value) {
-                final long sizeInBytes;
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
-                    sizeInBytes = value.getAllocationByteCount();
-                } else {
-                    sizeInBytes = value.getRowBytes() * value.getHeight();
-                }
+                final long sizeInBytes = value.getAllocationByteCount();
                 return (int) (sizeInBytes / 1024);
             }
         };
@@ -252,7 +247,7 @@ public class AvatarHandler {
                     if (sWorkerHandler != null) {
                         sWorkerHandler.removeMessages(MSG_LOAD, request.url);
                     }
-                    sRequests.delete(sRequests.keyAt(i));
+                    sRequests.removeAt(i);
                 }
                 return;
             }
@@ -283,7 +278,7 @@ public class AvatarHandler {
 
         final int widthRatio = options.outWidth / sMaxImageSizePx;
         final int heightRatio = options.outHeight / sMaxImageSizePx;
-        options.inSampleSize = heightRatio < widthRatio ? heightRatio : widthRatio;
+        options.inSampleSize = Math.min(heightRatio, widthRatio);
 
         Bitmap unscaled = BitmapFactory.decodeByteArray(data, 0, data.length, options);
         if (unscaled == null) {
@@ -355,7 +350,7 @@ public class AvatarHandler {
             mState = new UserNameState(userName, identifier);
 
             mPaint = new Paint();
-            mPaint.setTypeface(TypefaceCache.getTypeface(TypefaceCache.TF_MEDIUM));
+            mPaint.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
             mPaint.setTextAlign(Paint.Align.CENTER);
             mPaint.setAntiAlias(true);
 
